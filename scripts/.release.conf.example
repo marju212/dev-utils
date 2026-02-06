@@ -1,0 +1,39 @@
+# .release.conf — Configuration for release.sh
+#
+# Place this file in your repository root as .release.conf or in your
+# home directory as ~/.release.conf. Values can also be set via
+# environment variables (which take highest priority).
+#
+# Config priority (later wins):
+#   1. ~/.release.conf        (user-level)
+#   2. <repo>/.release.conf   (repo-level)
+#   3. --config FILE           (explicit flag)
+#   4. Environment variables   (highest priority)
+
+# GitLab personal access token (required for API calls).
+# Needs api scope. Token is resolved in this order:
+#   1. GITLAB_TOKEN environment variable  (export GITLAB_TOKEN=glpat-...)
+#   2. GITLAB_TOKEN key in a .release.conf file
+#   3. ~/.gitlab_token plain-text file    (echo "glpat-..." > ~/.gitlab_token)
+# Prefer option 1 or 3 over committing a token to a config file.
+# GITLAB_TOKEN=glpat-xxxxxxxxxxxxxxxxxxxx
+
+# GitLab API base URL. Change this for self-hosted GitLab instances.
+# Env var: GITLAB_API_URL
+GITLAB_API_URL=https://gitlab.com/api/v4
+
+# Branch to release from.
+# Env var: RELEASE_DEFAULT_BRANCH
+DEFAULT_BRANCH=main
+
+# Prefix for version tags (e.g. "v" produces tags like v1.2.3).
+# Env var: RELEASE_TAG_PREFIX
+TAG_PREFIX=v
+
+# Git remote name.
+# Env var: RELEASE_REMOTE
+REMOTE=origin
+
+# Skip merge request creation (true/false).
+# Equivalent to --no-mr flag.
+NO_MR=false
