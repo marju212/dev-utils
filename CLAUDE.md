@@ -4,4 +4,4 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-dev-utils is a collection of DevOps scripts. The repository is in its initial setup phase — no source code, build system, or testing infrastructure exists yet.
+dev-utils is a collection of utility scripts for DevOps workflows. The repository is in its initial setup phase.
