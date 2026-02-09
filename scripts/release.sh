@@ -35,10 +35,12 @@ _ENV_GITLAB_API_URL="${GITLAB_API_URL:-}"
 _ENV_RELEASE_DEFAULT_BRANCH="${RELEASE_DEFAULT_BRANCH:-}"
 _ENV_RELEASE_TAG_PREFIX="${RELEASE_TAG_PREFIX:-}"
 _ENV_RELEASE_REMOTE="${RELEASE_REMOTE:-}"
+_ENV_GITLAB_VERIFY_SSL="${GITLAB_VERIFY_SSL:-}"
 
 # Defaults (overridden by config / env)
 GITLAB_TOKEN="${GITLAB_TOKEN:-}"
 GITLAB_API_URL="${GITLAB_API_URL:-https://gitlab.com/api/v4}"
+VERIFY_SSL="${GITLAB_VERIFY_SSL:-true}"
 DEFAULT_BRANCH="${RELEASE_DEFAULT_BRANCH:-main}"
 TAG_PREFIX="${RELEASE_TAG_PREFIX:-v}"
 REMOTE="${RELEASE_REMOTE:-origin}"
@@ -55,7 +57,7 @@ _reset() {
   if $_use_color; then printf "\e[0m"; fi
 }
 
-log_info()    { echo -e "$(_color "34")ℹ $*$(_reset)" >&2; }
+log_info()    { echo -e "$(_color "94")ℹ $*$(_reset)" >&2; }
 log_warn()    { echo -e "$(_color "33")⚠ $*$(_reset)" >&2; }
 log_error()   { echo -e "$(_color "31")✖ $*$(_reset)" >&2; }
 log_success() { echo -e "$(_color "32")✔ $*$(_reset)" >&2; }
@@ -130,6 +132,7 @@ Environment variables:
   RELEASE_DEFAULT_BRANCH   Branch to release from (default: main)
   RELEASE_TAG_PREFIX       Tag prefix (default: v)
   RELEASE_REMOTE           Git remote name (default: origin)
+  GITLAB_VERIFY_SSL        Verify SSL certificates (default: true, set to false for self-signed certs)
 
 Token resolution (first match wins):
   GITLAB_TOKEN env var     Exported shell variable (highest priority)
@@ -215,6 +218,7 @@ _load_conf_file() {
         DEFAULT_BRANCH)     DEFAULT_BRANCH="$value" ;;
         TAG_PREFIX)         TAG_PREFIX="$value" ;;
         REMOTE)             REMOTE="$value" ;;
+        VERIFY_SSL)         VERIFY_SSL="$value" ;;
         NO_MR)              [[ "$value" == "true" ]] && NO_MR=true ;;
         *)                  log_warn "Unknown config key: $key" ;;
       esac
@@ -256,6 +260,7 @@ load_config() {
   if [[ -n "$_ENV_RELEASE_DEFAULT_BRANCH" ]]; then DEFAULT_BRANCH="$_ENV_RELEASE_DEFAULT_BRANCH"; fi
   if [[ -n "$_ENV_RELEASE_TAG_PREFIX" ]]; then     TAG_PREFIX="$_ENV_RELEASE_TAG_PREFIX"; fi
   if [[ -n "$_ENV_RELEASE_REMOTE" ]]; then         REMOTE="$_ENV_RELEASE_REMOTE"; fi
+  if [[ -n "$_ENV_GITLAB_VERIFY_SSL" ]]; then     VERIFY_SSL="$_ENV_GITLAB_VERIFY_SSL"; fi
 }
 
 # ─── Branch validation ──────────────────────────────────────────────────────────
@@ -443,6 +448,10 @@ gitlab_api() {
     --header "Content-Type: application/json"
     --request "$method"
   )
+
+  if [[ "$VERIFY_SSL" == "false" ]]; then
+    curl_args+=(--insecure)
+  fi
 
   if [[ -n "$data" ]]; then
     curl_args+=(--data "$data")
