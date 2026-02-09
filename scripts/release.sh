@@ -442,7 +442,10 @@ gitlab_api() {
   printf 'PRIVATE-TOKEN: %s' "$GITLAB_TOKEN" > "$header_file"
 
   local curl_args=(
-    --silent
+    --silent --show-error
+    --location
+    --connect-timeout 10
+    --max-time 30
     --write-out "\n%{http_code}"
     --header @"$header_file"
     --header "Content-Type: application/json"
@@ -457,7 +460,13 @@ gitlab_api() {
     curl_args+=(--data "$data")
   fi
 
-  response="$(curl "${curl_args[@]}" "$url")"
+  if ! response="$(curl "${curl_args[@]}" "$url" 2>&1)"; then
+    rm -f "$header_file"
+    log_error "Failed to connect to GitLab API: $url"
+    log_error "curl error: $response"
+    log_error "Check GITLAB_API_URL, network connectivity, and SSL settings (VERIFY_SSL=false for self-signed certs)."
+    return 1
+  fi
   rm -f "$header_file"
   http_code="$(echo "$response" | tail -n1)"
   response="$(echo "$response" | sed '$d')"
@@ -499,8 +508,9 @@ get_gitlab_project_id() {
     exit 1
   fi
 
-  # URL-encode the project path (slashes -> %2F)
-  local encoded_path="${project_path//\//%2F}"
+  # URL-encode the full project path (slashes, spaces, special chars)
+  local encoded_path
+  encoded_path="$(jq -rn --arg p "$project_path" '$p | @uri')"
 
   log_info "Detecting GitLab project ID for: $project_path"
 
