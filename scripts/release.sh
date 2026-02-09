@@ -21,7 +21,7 @@ REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || pwd)"
 
 DRY_RUN=false
 NO_MR=false
-UPDATE_DEFAULT_BRANCH=false
+UPDATE_DEFAULT_BRANCH=true
 CONFIG_FILE=""
 AUTO_YES=false
 CLI_VERSION=""
@@ -36,6 +36,7 @@ _ENV_RELEASE_DEFAULT_BRANCH="${RELEASE_DEFAULT_BRANCH:-}"
 _ENV_RELEASE_TAG_PREFIX="${RELEASE_TAG_PREFIX:-}"
 _ENV_RELEASE_REMOTE="${RELEASE_REMOTE:-}"
 _ENV_GITLAB_VERIFY_SSL="${GITLAB_VERIFY_SSL:-}"
+_ENV_RELEASE_UPDATE_DEFAULT_BRANCH="${RELEASE_UPDATE_DEFAULT_BRANCH:-}"
 
 # Defaults (overridden by config / env)
 GITLAB_TOKEN="${GITLAB_TOKEN:-}"
@@ -116,7 +117,7 @@ Automate version management and release branch creation for GitLab repos.
 Options:
   --dry-run                  Run all checks without making changes
   --no-mr                    Skip merge request creation
-  --update-default-branch    Change GitLab default branch to the release branch
+  --update-default-branch    Change GitLab default branch to the release branch (default: true)
   --config FILE              Path to config file (default: .release.conf)
   --version X.Y.Z            Set release version non-interactively
   --yes, -y                  Auto-confirm all prompts (for CI/CD)
@@ -133,6 +134,7 @@ Environment variables:
   RELEASE_TAG_PREFIX       Tag prefix (default: v)
   RELEASE_REMOTE           Git remote name (default: origin)
   GITLAB_VERIFY_SSL        Verify SSL certificates (default: true, set to false for self-signed certs)
+  RELEASE_UPDATE_DEFAULT_BRANCH  Update GitLab default branch to release branch (default: true)
 
 Token resolution (first match wins):
   GITLAB_TOKEN env var     Exported shell variable (highest priority)
@@ -220,6 +222,7 @@ _load_conf_file() {
         REMOTE)             REMOTE="$value" ;;
         VERIFY_SSL)         VERIFY_SSL="$value" ;;
         NO_MR)              [[ "$value" == "true" ]] && NO_MR=true ;;
+        UPDATE_DEFAULT_BRANCH) if [[ "$value" == "true" ]]; then UPDATE_DEFAULT_BRANCH=true; elif [[ "$value" == "false" ]]; then UPDATE_DEFAULT_BRANCH=false; fi ;;
         *)                  log_warn "Unknown config key: $key" ;;
       esac
     done < "$file"
@@ -261,6 +264,9 @@ load_config() {
   if [[ -n "$_ENV_RELEASE_TAG_PREFIX" ]]; then     TAG_PREFIX="$_ENV_RELEASE_TAG_PREFIX"; fi
   if [[ -n "$_ENV_RELEASE_REMOTE" ]]; then         REMOTE="$_ENV_RELEASE_REMOTE"; fi
   if [[ -n "$_ENV_GITLAB_VERIFY_SSL" ]]; then     VERIFY_SSL="$_ENV_GITLAB_VERIFY_SSL"; fi
+  if [[ -n "$_ENV_RELEASE_UPDATE_DEFAULT_BRANCH" ]]; then
+    if [[ "$_ENV_RELEASE_UPDATE_DEFAULT_BRANCH" == "true" ]]; then UPDATE_DEFAULT_BRANCH=true; else UPDATE_DEFAULT_BRANCH=false; fi
+  fi
 }
 
 # ─── Branch validation ──────────────────────────────────────────────────────────
@@ -665,15 +671,39 @@ print_summary() {
   local tag="$3"
   local mr_url="${4:-n/a}"
 
+  local rows=(
+    "Version:  ${TAG_PREFIX}${version}"
+    "Branch:   ${branch}"
+    "Tag:      ${tag}"
+    "MR:       ${mr_url}"
+  )
+
+  # Determine inner width: minimum 42, or longest row + 4 for padding
+  local min_width=42
+  local inner_width=$min_width
+  local title="Release Summary"
+  for row in "${rows[@]}"; do
+    local len=${#row}
+    if (( len + 4 > inner_width )); then
+      inner_width=$(( len + 4 ))
+    fi
+  done
+
+  local border=""
+  for (( i = 0; i < inner_width + 4; i++ )); do border+="═"; done
+
+  local title_pad=$(( inner_width - ${#title} ))
+  local title_left=$(( title_pad / 2 ))
+  local title_right=$(( title_pad - title_left ))
+
   echo "" >&2
-  echo "╔══════════════════════════════════════════════╗" >&2
-  echo "║           Release Summary                    ║" >&2
-  echo "╠══════════════════════════════════════════════╣" >&2
-  printf "║  %-42s  ║\n" "Version:  ${TAG_PREFIX}${version}" >&2
-  printf "║  %-42s  ║\n" "Branch:   ${branch}" >&2
-  printf "║  %-42s  ║\n" "Tag:      ${tag}" >&2
-  printf "║  %-42s  ║\n" "MR:       ${mr_url}" >&2
-  echo "╚══════════════════════════════════════════════╝" >&2
+  printf "╔%s╗\n" "$border" >&2
+  printf "║  %*s%s%*s  ║\n" "$title_left" "" "$title" "$title_right" "" >&2
+  printf "╠%s╣\n" "$border" >&2
+  for row in "${rows[@]}"; do
+    printf "║  %-${inner_width}s  ║\n" "$row" >&2
+  done
+  printf "╚%s╝\n" "$border" >&2
   echo "" >&2
 
   if $DRY_RUN; then

@@ -71,8 +71,8 @@ setup() {
   [ "$UPDATE_DEFAULT_BRANCH" = "true" ]
 }
 
-@test "parse_args: UPDATE_DEFAULT_BRANCH defaults to false" {
-  [ "$UPDATE_DEFAULT_BRANCH" = "false" ]
+@test "parse_args: UPDATE_DEFAULT_BRANCH defaults to true" {
+  [ "$UPDATE_DEFAULT_BRANCH" = "true" ]
 }
 
 # ─── unknown option ──────────────────────────────────────────────────────────────

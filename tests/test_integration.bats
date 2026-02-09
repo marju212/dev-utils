@@ -93,13 +93,30 @@ _export_env() {
   [ "$current_branch" = "main" ]
 }
 
-# ─── BUG-2: update_default_branch is opt-in only ────────────────────────────────
+# ─── update_default_branch defaults to true ──────────────────────────────────────
 
-@test "integration: default branch NOT updated without --update-default-branch" {
+@test "integration: default branch updated by default" {
   cd "$WORK_REPO"
   _export_env
 
-  add_test_commit "No default branch update"
+  add_test_commit "Default branch update by default"
+  push_test_commits
+
+  run bash -c '
+    cd "'"$WORK_REPO"'"
+    printf "1\ny\n" | "'"$RELEASE_SCRIPT"'" --no-mr 2>&1
+  '
+  echo "OUTPUT: $output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Default branch updated"* ]]
+}
+
+@test "integration: default branch NOT updated when disabled via env var" {
+  cd "$WORK_REPO"
+  _export_env
+  export RELEASE_UPDATE_DEFAULT_BRANCH=false
+
+  add_test_commit "No default branch update via env"
   push_test_commits
 
   run bash -c '

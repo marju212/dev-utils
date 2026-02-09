@@ -101,6 +101,45 @@ EOF
   [ "$NO_MR" = "true" ]
 }
 
+@test "load_config: UPDATE_DEFAULT_BRANCH=false in config disables it" {
+  cat > "$TEST_TMPDIR/.release.conf" <<'EOF'
+UPDATE_DEFAULT_BRANCH=false
+EOF
+
+  UPDATE_DEFAULT_BRANCH=true
+  REPO_ROOT="$TEST_TMPDIR"
+  CONFIG_FILE=""
+  _ENV_RELEASE_UPDATE_DEFAULT_BRANCH=""
+  load_config
+  [ "$UPDATE_DEFAULT_BRANCH" = "false" ]
+}
+
+@test "load_config: UPDATE_DEFAULT_BRANCH=true in config enables it" {
+  cat > "$TEST_TMPDIR/.release.conf" <<'EOF'
+UPDATE_DEFAULT_BRANCH=true
+EOF
+
+  UPDATE_DEFAULT_BRANCH=false
+  REPO_ROOT="$TEST_TMPDIR"
+  CONFIG_FILE=""
+  _ENV_RELEASE_UPDATE_DEFAULT_BRANCH=""
+  load_config
+  [ "$UPDATE_DEFAULT_BRANCH" = "true" ]
+}
+
+@test "load_config: RELEASE_UPDATE_DEFAULT_BRANCH env var overrides config" {
+  cat > "$TEST_TMPDIR/.release.conf" <<'EOF'
+UPDATE_DEFAULT_BRANCH=true
+EOF
+
+  UPDATE_DEFAULT_BRANCH=true
+  REPO_ROOT="$TEST_TMPDIR"
+  CONFIG_FILE=""
+  _ENV_RELEASE_UPDATE_DEFAULT_BRANCH="false"
+  load_config
+  [ "$UPDATE_DEFAULT_BRANCH" = "false" ]
+}
+
 @test "load_config: missing --config file exits with error" {
   CONFIG_FILE="$TEST_TMPDIR/nonexistent.conf"
   REPO_ROOT="$TEST_TMPDIR"
