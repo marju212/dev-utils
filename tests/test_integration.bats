@@ -30,7 +30,7 @@ _export_env() {
   # Pipe "1" to select patch bump, then expect dry-run to complete
   run bash -c '
     cd "'"$WORK_REPO"'"
-    echo "1" | "'"$RELEASE_SCRIPT"'" --dry-run --no-mr 2>&1
+    echo "1" | "'"$RELEASE_SCRIPT"'" --dry-run 2>&1
   '
   echo "OUTPUT: $output"
   [ "$status" -eq 0 ]
@@ -53,7 +53,7 @@ _export_env() {
   # Select "2" for minor bump: should suggest v1.3.0
   run bash -c '
     cd "'"$WORK_REPO"'"
-    echo "2" | "'"$RELEASE_SCRIPT"'" --dry-run --no-mr 2>&1
+    echo "2" | "'"$RELEASE_SCRIPT"'" --dry-run 2>&1
   '
   echo "OUTPUT: $output"
   [ "$status" -eq 0 ]
@@ -72,7 +72,7 @@ _export_env() {
   # Pipe "1" for patch bump, then "y" to confirm
   run bash -c '
     cd "'"$WORK_REPO"'"
-    printf "1\ny\n" | "'"$RELEASE_SCRIPT"'" --no-mr 2>&1
+    printf "1\ny\n" | "'"$RELEASE_SCRIPT"'" 2>&1
   '
   echo "OUTPUT: $output"
   [ "$status" -eq 0 ]
@@ -93,6 +93,27 @@ _export_env() {
   [ "$current_branch" = "main" ]
 }
 
+# ─── Normal release does not create MR ───────────────────────────────────────────
+
+@test "integration: normal release does not create MR" {
+  cd "$WORK_REPO"
+  _export_env
+
+  add_test_commit "No MR feature"
+  push_test_commits
+
+  run bash -c '
+    cd "'"$WORK_REPO"'"
+    printf "1\ny\n" | "'"$RELEASE_SCRIPT"'" 2>&1
+  '
+  echo "OUTPUT: $output"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Merge request created"* ]]
+  [[ "$output" != *"merge_requests"* ]]
+  # Summary should NOT have an MR row
+  [[ "$output" != *"MR:"* ]]
+}
+
 # ─── update_default_branch defaults to true ──────────────────────────────────────
 
 @test "integration: default branch updated by default" {
@@ -104,7 +125,7 @@ _export_env() {
 
   run bash -c '
     cd "'"$WORK_REPO"'"
-    printf "1\ny\n" | "'"$RELEASE_SCRIPT"'" --no-mr 2>&1
+    printf "1\ny\n" | "'"$RELEASE_SCRIPT"'" 2>&1
   '
   echo "OUTPUT: $output"
   [ "$status" -eq 0 ]
@@ -121,7 +142,7 @@ _export_env() {
 
   run bash -c '
     cd "'"$WORK_REPO"'"
-    printf "1\ny\n" | "'"$RELEASE_SCRIPT"'" --no-mr 2>&1
+    printf "1\ny\n" | "'"$RELEASE_SCRIPT"'" 2>&1
   '
   echo "OUTPUT: $output"
   [ "$status" -eq 0 ]
@@ -138,28 +159,11 @@ _export_env() {
 
   run bash -c '
     cd "'"$WORK_REPO"'"
-    printf "1\ny\n" | "'"$RELEASE_SCRIPT"'" --no-mr --update-default-branch 2>&1
+    printf "1\ny\n" | "'"$RELEASE_SCRIPT"'" --update-default-branch 2>&1
   '
   echo "OUTPUT: $output"
   [ "$status" -eq 0 ]
   [[ "$output" == *"Default branch updated"* ]]
-}
-
-@test "integration: real release with MR creation" {
-  cd "$WORK_REPO"
-  _export_env
-
-  add_test_commit "MR test feature"
-  push_test_commits
-
-  # Pipe "1" for patch, "y" for confirm
-  run bash -c '
-    cd "'"$WORK_REPO"'"
-    printf "1\ny\n" | "'"$RELEASE_SCRIPT"'" 2>&1
-  '
-  echo "OUTPUT: $output"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"Merge request created"* ]] || [[ "$output" == *"merge_requests"* ]]
 }
 
 # ─── Failure scenarios ───────────────────────────────────────────────────────────
@@ -202,7 +206,7 @@ _export_env() {
   # Select patch version "1", then "n" to cancel
   run bash -c '
     cd "'"$WORK_REPO"'"
-    printf "1\nn\n" | "'"$RELEASE_SCRIPT"'" --no-mr 2>&1
+    printf "1\nn\n" | "'"$RELEASE_SCRIPT"'" 2>&1
   '
   [ "$status" -eq 0 ]
   [[ "$output" == *"cancelled"* ]]
@@ -225,7 +229,7 @@ _export_env() {
   # Select custom (choice 4) and enter the existing version
   run bash -c '
     cd "'"$WORK_REPO"'"
-    printf "4\n0.0.1\n" | "'"$RELEASE_SCRIPT"'" --dry-run --no-mr 2>&1
+    printf "4\n0.0.1\n" | "'"$RELEASE_SCRIPT"'" --dry-run 2>&1
   '
   [ "$status" -ne 0 ]
   [[ "$output" == *"already exists"* ]]
@@ -235,7 +239,7 @@ _export_env() {
 
 # ─── CI mode (--version --yes) ───────────────────────────────────────────────
 
-@test "integration: --version --yes --no-mr completes without interaction" {
+@test "integration: --version --yes completes without interaction" {
   cd "$WORK_REPO"
   _export_env
 
@@ -244,7 +248,7 @@ _export_env() {
 
   run bash -c '
     cd "'"$WORK_REPO"'"
-    "'"$RELEASE_SCRIPT"'" --version 1.0.0 --yes --no-mr 2>&1
+    "'"$RELEASE_SCRIPT"'" --version 1.0.0 --yes 2>&1
   '
   echo "OUTPUT: $output"
   [ "$status" -eq 0 ]
@@ -270,7 +274,7 @@ _export_env() {
 
   run bash -c '
     cd "'"$WORK_REPO"'"
-    "'"$RELEASE_SCRIPT"'" --version abc --yes --no-mr 2>&1
+    "'"$RELEASE_SCRIPT"'" --version abc --yes 2>&1
   '
   [ "$status" -ne 0 ]
   [[ "$output" == *"Invalid semver"* ]]
@@ -288,7 +292,7 @@ _export_env() {
 
   run bash -c '
     cd "'"$WORK_REPO"'"
-    "'"$RELEASE_SCRIPT"'" --version 0.0.1 --yes --no-mr 2>&1
+    "'"$RELEASE_SCRIPT"'" --version 0.0.1 --yes 2>&1
   '
   [ "$status" -ne 0 ]
   [[ "$output" == *"already exists"* ]]
@@ -306,7 +310,7 @@ _export_env() {
 
   run bash -c '
     cd "'"$WORK_REPO"'"
-    "'"$RELEASE_SCRIPT"'" --version 1.0.0 --yes --dry-run --no-mr 2>&1
+    "'"$RELEASE_SCRIPT"'" --version 1.0.0 --yes --dry-run 2>&1
   '
   echo "OUTPUT: $output"
   [ "$status" -eq 0 ]
@@ -332,10 +336,94 @@ EOF
 
   run bash -c '
     cd "'"$WORK_REPO"'"
-    echo "1" | "'"$RELEASE_SCRIPT"'" --dry-run --no-mr --config "'"$conf"'" 2>&1
+    echo "1" | "'"$RELEASE_SCRIPT"'" --dry-run --config "'"$conf"'" 2>&1
   '
   echo "OUTPUT: $output"
   [ "$status" -eq 0 ]
   [[ "$output" == *"Loading config"* ]]
   [[ "$output" == *"v0.0.1"* ]]
+}
+
+# ─── Hotfix MR integration ──────────────────────────────────────────────────────
+
+@test "integration: --hotfix-mr creates MR for branch with commits ahead" {
+  cd "$WORK_REPO"
+  _export_env
+
+  add_test_commit "Initial feature"
+  push_test_commits
+
+  # Create a release branch and push it
+  git checkout -b release/v1.0.0 >/dev/null 2>&1
+  add_test_commit "Hotfix commit"
+  git push origin release/v1.0.0 >/dev/null 2>&1
+  git checkout main >/dev/null 2>&1
+
+  run bash -c '
+    cd "'"$WORK_REPO"'"
+    printf "y\n" | "'"$RELEASE_SCRIPT"'" --hotfix-mr release/v1.0.0 2>&1
+  '
+  echo "OUTPUT: $output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Hotfix MR created"* ]]
+}
+
+@test "integration: --hotfix-mr dry-run does not create MR" {
+  cd "$WORK_REPO"
+  _export_env
+
+  add_test_commit "Initial feature"
+  push_test_commits
+
+  # Create a release branch with a hotfix commit
+  git checkout -b release/v1.0.0 >/dev/null 2>&1
+  add_test_commit "Hotfix commit"
+  git push origin release/v1.0.0 >/dev/null 2>&1
+  git checkout main >/dev/null 2>&1
+
+  run bash -c '
+    cd "'"$WORK_REPO"'"
+    "'"$RELEASE_SCRIPT"'" --hotfix-mr release/v1.0.0 --dry-run --yes 2>&1
+  '
+  echo "OUTPUT: $output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dry-run"* ]]
+  [[ "$output" == *"Hotfix MR created"* ]]
+}
+
+@test "integration: --hotfix-mr fails when branch does not exist on remote" {
+  cd "$WORK_REPO"
+  _export_env
+
+  add_test_commit "Initial feature"
+  push_test_commits
+
+  run bash -c '
+    cd "'"$WORK_REPO"'"
+    "'"$RELEASE_SCRIPT"'" --hotfix-mr release/v9.9.9 --yes 2>&1
+  '
+  echo "OUTPUT: $output"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"does not exist"* ]]
+}
+
+@test "integration: --hotfix-mr fails when branch has no commits ahead" {
+  cd "$WORK_REPO"
+  _export_env
+
+  add_test_commit "Initial feature"
+  push_test_commits
+
+  # Create a release branch at exactly the same point as main (no commits ahead)
+  git checkout -b release/v1.0.0 >/dev/null 2>&1
+  git push origin release/v1.0.0 >/dev/null 2>&1
+  git checkout main >/dev/null 2>&1
+
+  run bash -c '
+    cd "'"$WORK_REPO"'"
+    "'"$RELEASE_SCRIPT"'" --hotfix-mr release/v1.0.0 --yes 2>&1
+  '
+  echo "OUTPUT: $output"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no commits ahead"* ]]
 }

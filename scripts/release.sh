@@ -5,12 +5,12 @@
 # Usage: ./scripts/release.sh [OPTIONS]
 #
 # Options:
-#   --dry-run        Run all checks without making changes
-#   --no-mr          Skip merge request creation
-#   --config FILE    Path to config file
-#   --version X.Y.Z  Set release version non-interactively
-#   --yes, -y        Auto-confirm all prompts (for CI/CD)
-#   --help           Show this help message
+#   --dry-run            Run all checks without making changes
+#   --hotfix-mr BRANCH   Create MR from a release branch back to the default branch
+#   --config FILE        Path to config file
+#   --version X.Y.Z      Set release version non-interactively
+#   --yes, -y            Auto-confirm all prompts (for CI/CD)
+#   --help               Show this help message
 #
 set -euo pipefail
 
@@ -20,7 +20,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || pwd)"
 
 DRY_RUN=false
-NO_MR=false
+HOTFIX_MR_BRANCH=""
 UPDATE_DEFAULT_BRANCH=true
 CONFIG_FILE=""
 AUTO_YES=false
@@ -116,7 +116,7 @@ Automate version management and release branch creation for GitLab repos.
 
 Options:
   --dry-run                  Run all checks without making changes
-  --no-mr                    Skip merge request creation
+  --hotfix-mr BRANCH         Create MR from a release branch back to the default branch
   --update-default-branch    Change GitLab default branch to the release branch (default: true)
   --config FILE              Path to config file (default: .release.conf)
   --version X.Y.Z            Set release version non-interactively
@@ -124,8 +124,16 @@ Options:
   --help                     Show this help message
 
 CI/CD usage:
-  ./scripts/release.sh --version 1.2.3 --yes --no-mr
+  ./scripts/release.sh --version 1.2.3 --yes
   GITLAB_TOKEN=\$TOKEN ./scripts/release.sh --version 1.2.3 --yes
+
+Hotfix workflow:
+  # 1. Create a release (branch + tag only, no MR)
+  ./scripts/release.sh --version 1.2.3 --yes
+  # 2. Push hotfix commits to the release branch
+  git checkout release/v1.2.3 && git cherry-pick <commit> && git push
+  # 3. Create MR from the release branch back to the default branch
+  ./scripts/release.sh --hotfix-mr release/v1.2.3
 
 Environment variables:
   GITLAB_TOKEN             GitLab personal access token (required for API calls)
@@ -156,9 +164,13 @@ parse_args() {
         DRY_RUN=true
         shift
         ;;
-      --no-mr)
-        NO_MR=true
-        shift
+      --hotfix-mr)
+        if [[ -z "${2:-}" ]]; then
+          log_error "--hotfix-mr requires a branch name argument"
+          exit 1
+        fi
+        HOTFIX_MR_BRANCH="$2"
+        shift 2
         ;;
       --update-default-branch)
         UPDATE_DEFAULT_BRANCH=true
@@ -221,7 +233,6 @@ _load_conf_file() {
         TAG_PREFIX)         TAG_PREFIX="$value" ;;
         REMOTE)             REMOTE="$value" ;;
         VERIFY_SSL)         VERIFY_SSL="$value" ;;
-        NO_MR)              [[ "$value" == "true" ]] && NO_MR=true ;;
         UPDATE_DEFAULT_BRANCH) if [[ "$value" == "true" ]]; then UPDATE_DEFAULT_BRANCH=true; elif [[ "$value" == "false" ]]; then UPDATE_DEFAULT_BRANCH=false; fi ;;
         *)                  log_warn "Unknown config key: $key" ;;
       esac
@@ -558,11 +569,8 @@ update_default_branch() {
 create_merge_request() {
   local source_branch="$1"
   local version="$2"
-
-  if $NO_MR; then
-    log_info "Skipping merge request creation (--no-mr)."
-    return 0
-  fi
+  local mr_title="${3:-Release ${TAG_PREFIX}${version}}"
+  local mr_desc="${4:-## Release ${TAG_PREFIX}${version}\n\n${CHANGELOG}}"
 
   log_info "Creating merge request: $source_branch → $DEFAULT_BRANCH"
 
@@ -576,8 +584,8 @@ create_merge_request() {
   body=$(jq -n \
     --arg source "$source_branch" \
     --arg target "$DEFAULT_BRANCH" \
-    --arg title "Release ${TAG_PREFIX}${version}" \
-    --arg desc "## Release ${TAG_PREFIX}${version}\n\n${CHANGELOG}" \
+    --arg title "$mr_title" \
+    --arg desc "$mr_desc" \
     '{
       source_branch: $source,
       target_branch: $target,
@@ -596,6 +604,66 @@ create_merge_request() {
   else
     log_success "Merge request created: $MR_URL"
   fi
+}
+
+# ─── Hotfix MR flow ─────────────────────────────────────────────────────────────
+
+hotfix_mr_flow() {
+  local branch="$HOTFIX_MR_BRANCH"
+
+  log_info "Fetching from $REMOTE..."
+  git fetch "$REMOTE" --tags --quiet
+
+  # Verify branch exists on remote
+  if ! git rev-parse --verify "$REMOTE/$branch" &>/dev/null; then
+    log_error "Branch '$branch' does not exist on remote '$REMOTE'."
+    exit 1
+  fi
+
+  # Verify branch has commits ahead of the default branch
+  local ahead_count
+  ahead_count="$(git rev-list --count "$REMOTE/$DEFAULT_BRANCH".."$REMOTE/$branch")"
+  if [[ "$ahead_count" -eq 0 ]]; then
+    log_error "Branch '$branch' has no commits ahead of '$DEFAULT_BRANCH'. Nothing to merge."
+    exit 1
+  fi
+  log_info "Branch '$branch' is $ahead_count commit(s) ahead of '$DEFAULT_BRANCH'."
+
+  # Extract version from branch name (release/${TAG_PREFIX}X.Y.Z pattern)
+  local version=""
+  if [[ "$branch" =~ ^release/${TAG_PREFIX}(.+)$ ]]; then
+    version="${BASH_REMATCH[1]}"
+  else
+    version="$branch"
+  fi
+
+  # Generate changelog from commits ahead of default branch
+  local changelog
+  changelog="$(git log "$REMOTE/$DEFAULT_BRANCH".."$REMOTE/$branch" --pretty=format:"- %s (%h)" --no-merges)"
+  if [[ -z "$changelog" ]]; then
+    changelog="- No changes recorded"
+  fi
+  CHANGELOG="$changelog"
+
+  echo "" >&2
+  echo "── Hotfix Changelog ───────────────────────────" >&2
+  echo "$CHANGELOG" >&2
+  echo "────────────────────────────────────────────────" >&2
+  echo "" >&2
+
+  if ! confirm "Create merge request from '$branch' to '$DEFAULT_BRANCH'?"; then
+    log_warn "Hotfix MR cancelled."
+    exit 0
+  fi
+
+  get_gitlab_project_id
+
+  local mr_title="Hotfix ${TAG_PREFIX}${version} merge back to ${DEFAULT_BRANCH}"
+  local mr_desc="## Hotfix ${TAG_PREFIX}${version}\n\n${CHANGELOG}"
+  create_merge_request "$branch" "$version" "$mr_title" "$mr_desc"
+
+  echo "" >&2
+  log_success "Hotfix MR created: ${MR_URL:-n/a}"
 }
 
 # ─── Git operations ─────────────────────────────────────────────────────────────
@@ -669,14 +737,16 @@ print_summary() {
   local version="$1"
   local branch="$2"
   local tag="$3"
-  local mr_url="${4:-n/a}"
+  local mr_url="${4:-}"
 
   local rows=(
     "Version:  ${TAG_PREFIX}${version}"
     "Branch:   ${branch}"
     "Tag:      ${tag}"
-    "MR:       ${mr_url}"
   )
+  if [[ -n "$mr_url" ]]; then
+    rows+=("MR:       ${mr_url}")
+  fi
 
   # Determine inner width: minimum 42, or longest row + 4 for padding
   local min_width=42
@@ -721,6 +791,12 @@ main() {
   if $DRY_RUN; then
     log_warn "Running in dry-run mode — no changes will be made."
     echo "" >&2
+  fi
+
+  # Dispatch to hotfix MR flow if requested
+  if [[ -n "$HOTFIX_MR_BRANCH" ]]; then
+    hotfix_mr_flow
+    return 0
   fi
 
   # Set up cleanup trap
@@ -780,9 +856,6 @@ main() {
     update_default_branch "$release_branch"
   fi
 
-  # Create merge request back to main
-  create_merge_request "$release_branch" "$NEW_VERSION"
-
   # Disable cleanup trap — we succeeded
   trap - EXIT
 
@@ -792,7 +865,7 @@ main() {
   fi
 
   # Print summary
-  print_summary "$NEW_VERSION" "$release_branch" "$release_tag" "${MR_URL:-n/a}"
+  print_summary "$NEW_VERSION" "$release_branch" "$release_tag"
 
   log_success "Release ${release_tag} completed!"
 }

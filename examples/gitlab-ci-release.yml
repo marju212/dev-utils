@@ -1,7 +1,11 @@
-# Example GitLab CI job for running release.sh non-interactively.
+# Example GitLab CI jobs for running release.sh non-interactively.
 #
-# Trigger manually from the GitLab UI by setting RELEASE_VERSION (e.g. "1.2.3").
-# The job will create a release branch, tag, and (optionally) a merge request.
+# Trigger the release job manually from the GitLab UI by setting RELEASE_VERSION
+# (e.g. "1.2.3"). The job will create a release branch and tag.
+#
+# Trigger the hotfix-mr job by setting HOTFIX_BRANCH (e.g. "release/v1.2.3").
+# The job will create a merge request from the release branch back to the
+# default branch.
 
 release:
   stage: deploy
@@ -20,5 +24,21 @@ release:
     - ./scripts/release.sh --version "$RELEASE_VERSION" --yes
   rules:
     - if: '$RELEASE_VERSION'
+      when: manual
+  allow_failure: false
+
+hotfix-mr:
+  stage: deploy
+  image: alpine:latest
+  variables:
+    GIT_DEPTH: 0
+  before_script:
+    - apk add --no-cache bash git curl jq
+    - git fetch --unshallow 2>/dev/null || true
+    - git fetch --tags
+  script:
+    - ./scripts/release.sh --hotfix-mr "$HOTFIX_BRANCH" --yes
+  rules:
+    - if: '$HOTFIX_BRANCH'
       when: manual
   allow_failure: false

@@ -229,18 +229,9 @@ teardown() {
   TAG_PREFIX="v"
   CHANGELOG="- Feature X"
   DRY_RUN=false
-  NO_MR=false
 
   create_merge_request "release/v1.0.0" "1.0.0"
   [[ "$MR_URL" == *"merge_requests"* ]]
-}
-
-@test "create_merge_request: skipped when NO_MR=true" {
-  NO_MR=true
-  DRY_RUN=false
-  run create_merge_request "release/v1.0.0" "1.0.0"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"Skipping"* ]]
 }
 
 @test "create_merge_request: dry-run skips API call" {
@@ -249,7 +240,6 @@ teardown() {
   TAG_PREFIX="v"
   CHANGELOG="- Feature X"
   DRY_RUN=true
-  NO_MR=false
 
   create_merge_request "release/v1.0.0" "1.0.0"
   [[ "$MR_URL" == *"dry-run"* ]]

@@ -4,7 +4,7 @@ A collection of utility scripts for DevOps workflows.
 
 ## release.sh
 
-Automates version management and release branch creation for GitLab repositories. The script handles the full release lifecycle: version bumping, changelog generation, release branch creation, tagging, and merge request creation.
+Automates version management and release branch creation for GitLab repositories. The script handles the full release lifecycle: version bumping, changelog generation, release branch creation, and tagging. Merge requests are created separately via the `--hotfix-mr` flag after hotfix commits have been pushed to the release branch.
 
 ### Prerequisites
 
@@ -25,14 +25,14 @@ A **GitLab personal access token** with `api` scope is required for API operatio
 # Create a release (interactive version prompt)
 ./scripts/release.sh
 
-# Create a release without a merge request
-./scripts/release.sh --no-mr
-
 # Use a custom config file
 ./scripts/release.sh --config /path/to/my.conf
 
 # Also update the GitLab default branch to the release branch
 ./scripts/release.sh --update-default-branch
+
+# Create a merge request from a release branch back to main
+./scripts/release.sh --hotfix-mr release/v1.2.3
 ```
 
 ### What It Does
@@ -51,19 +51,50 @@ When you run `release.sh`, it performs the following steps in order:
 10. **Creates a release branch** named `release/<tag>` (e.g. `release/v1.3.0`) and pushes it to the remote.
 11. **Creates an annotated tag** with the changelog as the tag message and pushes it to the remote.
 12. **Optionally updates the GitLab default branch** to the release branch (if `--update-default-branch` is passed).
-13. **Creates a merge request** from the release branch back to the default branch, with the changelog in the description.
-14. **Switches back** to the default branch and prints a summary.
+13. **Switches back** to the default branch and prints a summary.
 
 If any step fails after branches or tags have been pushed, a **cleanup trap** automatically deletes the partial remote branch and tag, then restores you to the default branch.
+
+> **Note:** The release flow does not create a merge request. Use `--hotfix-mr` separately after pushing hotfix commits to the release branch (see [Hotfix Workflow](#hotfix-workflow)).
+
+### Hotfix Workflow
+
+The release flow creates a branch and tag only — no merge request. MRs are created later, after hotfix commits have been pushed to the release branch:
+
+1. **Create a release** (branch + tag):
+   ```bash
+   ./scripts/release.sh --version 1.2.0 --yes
+   ```
+
+2. **Push hotfix commits** to the release branch:
+   ```bash
+   git checkout release/v1.2.0
+   git cherry-pick <commit-sha>
+   git push
+   ```
+
+3. **Create the merge request** back to the default branch:
+   ```bash
+   ./scripts/release.sh --hotfix-mr release/v1.2.0
+   ```
+
+The `--hotfix-mr` flag:
+- Fetches from the remote and verifies the branch exists
+- Checks that the branch has commits ahead of the default branch
+- Generates a changelog from those commits
+- Asks for confirmation (or auto-confirms with `--yes`)
+- Creates a merge request via the GitLab API
 
 ### Command-Line Options
 
 | Option | Description |
 |---|---|
 | `--dry-run` | Run all validation and checks without making any changes. API calls, branch creation, tagging, and MR creation are skipped. |
-| `--no-mr` | Skip merge request creation. The release branch and tag are still created. |
+| `--hotfix-mr BRANCH` | Create a merge request from the specified release branch back to the default branch. The branch must exist on the remote and have commits ahead of the default branch. |
 | `--update-default-branch` | After creating the release branch, update the GitLab project's default branch to point to it. |
 | `--config FILE` | Load configuration from the specified file (in addition to the default config locations). |
+| `--version X.Y.Z` | Set the release version directly, bypassing the interactive version prompt. |
+| `--yes`, `-y` | Auto-confirm all prompts (for CI/CD). |
 | `--help`, `-h` | Show the help message and exit. |
 
 ### Configuration
@@ -97,9 +128,6 @@ TAG_PREFIX=v
 
 # Git remote name
 REMOTE=origin
-
-# Skip merge request creation (true/false)
-NO_MR=false
 
 # GitLab token (prefer env var or ~/.gitlab_token instead)
 # GITLAB_TOKEN=glpat-xxxxxxxxxxxxxxxxxxxx
@@ -163,7 +191,7 @@ If no previous tag exists, all commits are included. If there are no commits sin
 
 The changelog is used in:
 - The annotated tag message
-- The merge request description
+- The merge request description (when using `--hotfix-mr`)
 
 ### Git Remote URL Parsing
 
@@ -204,8 +232,8 @@ The script supports fully non-interactive execution for CI/CD pipelines via `--v
 # Non-interactive release (no prompts)
 ./scripts/release.sh --version 1.2.3 --yes
 
-# Combine with other flags
-./scripts/release.sh --version 1.2.3 --yes --no-mr
+# Create hotfix MR in CI
+./scripts/release.sh --hotfix-mr release/v1.2.3 --yes
 ```
 
 | Option | Description |
@@ -226,9 +254,6 @@ A sample `.gitlab-ci.yml` job is provided at [`examples/gitlab-ci-release.yml`](
 # Dry run to preview what would happen
 ./scripts/release.sh --dry-run
 
-# Release without creating a merge request
-./scripts/release.sh --no-mr
-
 # Self-hosted GitLab instance
 export GITLAB_API_URL=https://gitlab.mycompany.com/api/v4
 export GITLAB_TOKEN=glpat-xxxxxxxxxxxxxxxxxxxx
@@ -245,9 +270,37 @@ export RELEASE_TAG_PREFIX=release-
 # Use a project-specific config file
 ./scripts/release.sh --config ./my-project.conf
 
-# Full options: dry run with custom config, skip MR
-./scripts/release.sh --dry-run --no-mr --config ./my-project.conf
+# Full options: dry run with custom config
+./scripts/release.sh --dry-run --config ./my-project.conf
+
+# Create hotfix MR after pushing fixes to a release branch
+./scripts/release.sh --hotfix-mr release/v1.2.3
+
+# Hotfix MR dry run
+./scripts/release.sh --hotfix-mr release/v1.2.3 --dry-run
 ```
+
+### Architecture
+
+The script (~750 lines) is organized into sequential modules, each responsible for one phase of the release workflow:
+
+1. **Logging & utilities** — color-coded output (`log_info`, `log_warn`, `log_error`, `log_success`), `confirm()` prompt, `validate_semver()`
+2. **Argument parsing** — `parse_args()` handles CLI flags (`--dry-run`, `--hotfix-mr`, `--update-default-branch`, `--config`, `--help`)
+3. **Configuration loading** — multi-level config resolution with strict priority: env vars (snapshotted at startup) > `--config` file > repo `.release.conf` > user `~/.release.conf` > `~/.gitlab_token`
+4. **Repository validation** — `check_branch()` verifies git state (correct branch, clean tree, synced with remote)
+5. **Version management** — `get_latest_version()`, `suggest_versions()`, `prompt_version()` with duplicate tag/branch detection
+6. **Changelog generation** — markdown-formatted commit list since last tag
+7. **GitLab API module** — `gitlab_api()` passes tokens via temp file headers (never CLI args); `get_gitlab_project_id()` parses SSH/HTTPS remotes including nested groups; `create_merge_request()` and `update_default_branch()`
+8. **Hotfix MR flow** — `hotfix_mr_flow()` validates a release branch, generates a changelog from commits ahead of the default branch, and creates a merge request back to the default branch
+9. **Git operations** — branch/tag creation with push
+10. **Error recovery** — `cleanup_on_failure()` trap handler removes partial remote branches/tags on failure
+11. **Main flow** — `main()` orchestrates the full workflow; dispatches to `hotfix_mr_flow()` when `--hotfix-mr` is used
+
+Key design patterns:
+- Every write operation respects `$DRY_RUN` — full validation runs without side effects
+- Environment variables are snapshotted into `_ENV_*` vars at startup so config files cannot override them
+- The `cleanup_on_failure` trap ensures partial releases are rolled back
+- Release flow creates branch + tag only (no MR); MR creation is a separate step via `--hotfix-mr`
 
 ### Running Tests
 
@@ -268,3 +321,12 @@ bats tests/test_integration.bats   # End-to-end workflows
 # Run a specific test by name
 bats tests/test_semver.bats -f "validates correct semver"
 ```
+
+#### Test Infrastructure
+
+Tests use **BATS** (Bash Automated Testing System). Shared helpers in `tests/test_helpers.bash` provide:
+- `setup_test_repo()` — creates a bare remote + working clone per test
+- `source_release_functions()` — sources the script without executing `main()`
+- `start_mock_gitlab()` / `stop_mock_gitlab()` — manages `tests/mock_gitlab.py`, a Python HTTP server simulating GitLab API endpoints with scenario-based failure injection
+
+The mock server supports request recording for assertions and dynamic port assignment via a state file.

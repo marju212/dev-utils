@@ -33,7 +33,3 @@ TAG_PREFIX=v
 # Git remote name.
 # Env var: RELEASE_REMOTE
 REMOTE=origin
-
-# Skip merge request creation (true/false).
-# Equivalent to --no-mr flag.
-NO_MR=false

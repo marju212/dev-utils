@@ -89,16 +89,15 @@ EOF
   [[ "$output" == *"Unknown config key"* ]]
 }
 
-@test "load_config: NO_MR=true in config sets NO_MR" {
+@test "load_config: NO_MR in config warns as unknown key" {
   cat > "$TEST_TMPDIR/.release.conf" <<'EOF'
 NO_MR=true
 EOF
 
-  NO_MR=false
   REPO_ROOT="$TEST_TMPDIR"
   CONFIG_FILE=""
-  load_config
-  [ "$NO_MR" = "true" ]
+  run load_config
+  [[ "$output" == *"Unknown config key: NO_MR"* ]]
 }
 
 @test "load_config: UPDATE_DEFAULT_BRANCH=false in config disables it" {

@@ -28,12 +28,27 @@ setup() {
   [ "$DRY_RUN" = "true" ]
 }
 
-# ─── --no-mr ─────────────────────────────────────────────────────────────────────
+# ─── --hotfix-mr ────────────────────────────────────────────────────────────────
 
-@test "parse_args: --no-mr sets NO_MR=true" {
-  NO_MR=false
-  parse_args --no-mr
-  [ "$NO_MR" = "true" ]
+@test "parse_args: --hotfix-mr sets HOTFIX_MR_BRANCH" {
+  HOTFIX_MR_BRANCH=""
+  parse_args --hotfix-mr release/v1.2.3
+  [ "$HOTFIX_MR_BRANCH" = "release/v1.2.3" ]
+}
+
+@test "parse_args: --hotfix-mr without value exits with error" {
+  run bash -c '
+    source "'"$RELEASE_SCRIPT"'" --hotfix-mr 2>&1
+  '
+  [ "$status" -ne 0 ]
+}
+
+@test "parse_args: --hotfix-mr with --dry-run" {
+  DRY_RUN=false
+  HOTFIX_MR_BRANCH=""
+  parse_args --hotfix-mr release/v1.0.0 --dry-run
+  [ "$HOTFIX_MR_BRANCH" = "release/v1.0.0" ]
+  [ "$DRY_RUN" = "true" ]
 }
 
 # ─── --config ────────────────────────────────────────────────────────────────────
@@ -55,11 +70,11 @@ setup() {
 
 @test "parse_args: multiple flags combined" {
   DRY_RUN=false
-  NO_MR=false
+  HOTFIX_MR_BRANCH=""
   CONFIG_FILE=""
-  parse_args --dry-run --no-mr --config /tmp/x.conf
+  parse_args --dry-run --hotfix-mr release/v1.0.0 --config /tmp/x.conf
   [ "$DRY_RUN" = "true" ]
-  [ "$NO_MR" = "true" ]
+  [ "$HOTFIX_MR_BRANCH" = "release/v1.0.0" ]
   [ "$CONFIG_FILE" = "/tmp/x.conf" ]
 }
 
@@ -115,14 +130,12 @@ setup() {
 
 # ─── combined flags with --version and --yes ─────────────────────────────────────
 
-@test "parse_args: --version --yes --no-mr --dry-run combined" {
+@test "parse_args: --version --yes --dry-run combined" {
   DRY_RUN=false
-  NO_MR=false
   AUTO_YES=false
   CLI_VERSION=""
-  parse_args --version 2.0.0 --yes --no-mr --dry-run
+  parse_args --version 2.0.0 --yes --dry-run
   [ "$CLI_VERSION" = "2.0.0" ]
   [ "$AUTO_YES" = "true" ]
-  [ "$NO_MR" = "true" ]
   [ "$DRY_RUN" = "true" ]
 }
