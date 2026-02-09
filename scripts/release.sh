@@ -8,6 +8,8 @@
 #   --dry-run        Run all checks without making changes
 #   --no-mr          Skip merge request creation
 #   --config FILE    Path to config file
+#   --version X.Y.Z  Set release version non-interactively
+#   --yes, -y        Auto-confirm all prompts (for CI/CD)
 #   --help           Show this help message
 #
 set -euo pipefail
@@ -21,6 +23,8 @@ DRY_RUN=false
 NO_MR=false
 UPDATE_DEFAULT_BRANCH=false
 CONFIG_FILE=""
+AUTO_YES=false
+CLI_VERSION=""
 CLEANUP_BRANCH=""
 CLEANUP_TAG=""
 
@@ -62,6 +66,10 @@ confirm() {
   local message="${1:-Continue?}"
   if $DRY_RUN; then
     log_info "[dry-run] Would prompt: $message [y/N]"
+    return 0
+  fi
+  if $AUTO_YES; then
+    log_info "[auto-yes] $message [y/N]"
     return 0
   fi
   read -rp "$message [y/N] " answer
@@ -108,7 +116,13 @@ Options:
   --no-mr                    Skip merge request creation
   --update-default-branch    Change GitLab default branch to the release branch
   --config FILE              Path to config file (default: .release.conf)
+  --version X.Y.Z            Set release version non-interactively
+  --yes, -y                  Auto-confirm all prompts (for CI/CD)
   --help                     Show this help message
+
+CI/CD usage:
+  ./scripts/release.sh --version 1.2.3 --yes --no-mr
+  GITLAB_TOKEN=\$TOKEN ./scripts/release.sh --version 1.2.3 --yes
 
 Environment variables:
   GITLAB_TOKEN             GitLab personal access token (required for API calls)
@@ -152,6 +166,18 @@ parse_args() {
         fi
         CONFIG_FILE="$2"
         shift 2
+        ;;
+      --version)
+        if [[ -z "${2:-}" ]]; then
+          log_error "--version requires a version argument (X.Y.Z)"
+          exit 1
+        fi
+        CLI_VERSION="$2"
+        shift 2
+        ;;
+      --yes|-y)
+        AUTO_YES=true
+        shift
         ;;
       --help|-h)
         usage
@@ -243,12 +269,16 @@ check_branch() {
     exit 1
   fi
 
-  # Must be on the default branch
-  local current_branch
-  current_branch="$(git symbolic-ref --short HEAD)"
-  if [[ "$current_branch" != "$DEFAULT_BRANCH" ]]; then
-    log_error "Must be on '$DEFAULT_BRANCH' branch (currently on '$current_branch')."
-    exit 1
+  # Must be on the default branch (or at its tip in detached HEAD for CI)
+  local current_branch _detached_head=false
+  if current_branch="$(git symbolic-ref --short HEAD 2>/dev/null)"; then
+    if [[ "$current_branch" != "$DEFAULT_BRANCH" ]]; then
+      log_error "Must be on '$DEFAULT_BRANCH' branch (currently on '$current_branch')."
+      exit 1
+    fi
+  else
+    _detached_head=true
+    log_info "Detached HEAD detected (common in CI environments)."
   fi
 
   # Working tree must be clean
@@ -269,8 +299,13 @@ check_branch() {
   if [[ -z "$remote_sha" ]]; then
     log_warn "Remote branch '$REMOTE/$DEFAULT_BRANCH' not found. Continuing anyway."
   elif [[ "$local_sha" != "$remote_sha" ]]; then
-    log_error "Local '$DEFAULT_BRANCH' is not in sync with '$REMOTE/$DEFAULT_BRANCH'."
-    log_error "Pull or push changes before releasing."
+    if $_detached_head; then
+      log_error "HEAD is not at the tip of '$REMOTE/$DEFAULT_BRANCH'."
+      log_error "Ensure the CI job checks out the latest '$DEFAULT_BRANCH' commit."
+    else
+      log_error "Local '$DEFAULT_BRANCH' is not in sync with '$REMOTE/$DEFAULT_BRANCH'."
+      log_error "Pull or push changes before releasing."
+    fi
     exit 1
   fi
 
@@ -596,7 +631,7 @@ cleanup_on_failure() {
   if [[ -n "$CLEANUP_BRANCH" ]]; then
     log_warn "Deleting remote branch '$CLEANUP_BRANCH'..."
     git push "$REMOTE" --delete "$CLEANUP_BRANCH" 2>/dev/null || true
-    git checkout "$DEFAULT_BRANCH" 2>/dev/null || true
+    git checkout "$DEFAULT_BRANCH" 2>/dev/null || git checkout "$REMOTE/$DEFAULT_BRANCH" 2>/dev/null || true
     git branch -D "$CLEANUP_BRANCH" 2>/dev/null || true
   fi
 
@@ -648,7 +683,26 @@ main() {
   # Version selection
   local current_version
   current_version="$(get_latest_version)"
-  prompt_version "$current_version"
+
+  if [[ -n "$CLI_VERSION" ]]; then
+    validate_semver "$CLI_VERSION"
+    NEW_VERSION="$CLI_VERSION"
+    # Check if tag already exists
+    if git rev-parse "${TAG_PREFIX}${NEW_VERSION}" &>/dev/null; then
+      log_error "Tag '${TAG_PREFIX}${NEW_VERSION}' already exists."
+      exit 1
+    fi
+    # Check if release branch already exists
+    local branch_name="release/${TAG_PREFIX}${NEW_VERSION}"
+    if git rev-parse --verify "$branch_name" &>/dev/null || \
+       git rev-parse --verify "$REMOTE/$branch_name" &>/dev/null; then
+      log_error "Branch '$branch_name' already exists."
+      exit 1
+    fi
+    log_success "Will release ${TAG_PREFIX}${NEW_VERSION}"
+  else
+    prompt_version "$current_version"
+  fi
 
   local release_branch="release/${TAG_PREFIX}${NEW_VERSION}"
   local release_tag="${TAG_PREFIX}${NEW_VERSION}"
@@ -685,7 +739,7 @@ main() {
 
   # Switch back to default branch
   if ! $DRY_RUN; then
-    git checkout "$DEFAULT_BRANCH"
+    git checkout "$DEFAULT_BRANCH" 2>/dev/null || git checkout "$REMOTE/$DEFAULT_BRANCH" 2>/dev/null || true
   fi
 
   # Print summary

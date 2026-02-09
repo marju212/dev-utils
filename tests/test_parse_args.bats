@@ -83,3 +83,46 @@ setup() {
   '
   [ "$status" -ne 0 ]
 }
+
+# ─── --version ──────────────────────────────────────────────────────────────────
+
+@test "parse_args: --version sets CLI_VERSION" {
+  CLI_VERSION=""
+  parse_args --version 2.0.0
+  [ "$CLI_VERSION" = "2.0.0" ]
+}
+
+@test "parse_args: --version without value exits with error" {
+  run bash -c '
+    source "'"$RELEASE_SCRIPT"'" --version 2>&1
+  '
+  [ "$status" -ne 0 ]
+}
+
+# ─── --yes / -y ─────────────────────────────────────────────────────────────────
+
+@test "parse_args: --yes sets AUTO_YES=true" {
+  AUTO_YES=false
+  parse_args --yes
+  [ "$AUTO_YES" = "true" ]
+}
+
+@test "parse_args: -y sets AUTO_YES=true" {
+  AUTO_YES=false
+  parse_args -y
+  [ "$AUTO_YES" = "true" ]
+}
+
+# ─── combined flags with --version and --yes ─────────────────────────────────────
+
+@test "parse_args: --version --yes --no-mr --dry-run combined" {
+  DRY_RUN=false
+  NO_MR=false
+  AUTO_YES=false
+  CLI_VERSION=""
+  parse_args --version 2.0.0 --yes --no-mr --dry-run
+  [ "$CLI_VERSION" = "2.0.0" ]
+  [ "$AUTO_YES" = "true" ]
+  [ "$NO_MR" = "true" ]
+  [ "$DRY_RUN" = "true" ]
+}

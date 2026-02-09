@@ -1,0 +1,24 @@
+# Example GitLab CI job for running release.sh non-interactively.
+#
+# Trigger manually from the GitLab UI by setting RELEASE_VERSION (e.g. "1.2.3").
+# The job will create a release branch, tag, and (optionally) a merge request.
+
+release:
+  stage: deploy
+  image: alpine:latest
+  variables:
+    GIT_DEPTH: 0  # Full history needed for changelog generation
+  before_script:
+    - apk add --no-cache bash git curl jq
+    # Ensure full history even if GIT_DEPTH was ignored
+    - git fetch --unshallow 2>/dev/null || true
+    - git fetch --tags
+    # Configure git user for annotated tags
+    - git config user.name "GitLab CI"
+    - git config user.email "ci@${CI_SERVER_HOST}"
+  script:
+    - ./scripts/release.sh --version "$RELEASE_VERSION" --yes
+  rules:
+    - if: '$RELEASE_VERSION'
+      when: manual
+  allow_failure: false

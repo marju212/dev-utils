@@ -196,6 +196,27 @@ The script sets a `trap` on `EXIT` that runs a cleanup handler on failure. If an
 
 The trap is disabled after a successful release to avoid cleaning up valid artifacts.
 
+### CI/CD Usage
+
+The script supports fully non-interactive execution for CI/CD pipelines via `--version` and `--yes`:
+
+```bash
+# Non-interactive release (no prompts)
+./scripts/release.sh --version 1.2.3 --yes
+
+# Combine with other flags
+./scripts/release.sh --version 1.2.3 --yes --no-mr
+```
+
+| Option | Description |
+|---|---|
+| `--version X.Y.Z` | Set the release version directly, bypassing the interactive version prompt. |
+| `--yes`, `-y` | Auto-confirm all prompts. Without this, confirmation prompts will block in CI. |
+
+**Detached HEAD support:** GitLab CI runners typically check out a specific commit (detached HEAD) rather than a branch. The script detects this and validates that HEAD is at the tip of the remote default branch instead of requiring a named branch checkout.
+
+A sample `.gitlab-ci.yml` job is provided at [`examples/gitlab-ci-release.yml`](examples/gitlab-ci-release.yml).
+
 ### Examples
 
 ```bash

@@ -216,6 +216,90 @@ _export_env() {
 
 # ─── Config file integration ─────────────────────────────────────────────────────
 
+# ─── CI mode (--version --yes) ───────────────────────────────────────────────
+
+@test "integration: --version --yes --no-mr completes without interaction" {
+  cd "$WORK_REPO"
+  _export_env
+
+  add_test_commit "CI release feature"
+  push_test_commits
+
+  run bash -c '
+    cd "'"$WORK_REPO"'"
+    "'"$RELEASE_SCRIPT"'" --version 1.0.0 --yes --no-mr 2>&1
+  '
+  echo "OUTPUT: $output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Release Summary"* ]]
+  [[ "$output" == *"v1.0.0"* ]]
+  [[ "$output" == *"auto-yes"* ]]
+
+  # Verify branch was created in remote
+  run git ls-remote --heads "$REMOTE_REPO" "release/v1.0.0"
+  [[ "$output" == *"release/v1.0.0"* ]]
+
+  # Verify tag was created in remote
+  run git ls-remote --tags "$REMOTE_REPO" "v1.0.0"
+  [[ "$output" == *"v1.0.0"* ]]
+}
+
+@test "integration: --version with invalid semver fails" {
+  cd "$WORK_REPO"
+  _export_env
+
+  add_test_commit "Bad version test"
+  push_test_commits
+
+  run bash -c '
+    cd "'"$WORK_REPO"'"
+    "'"$RELEASE_SCRIPT"'" --version abc --yes --no-mr 2>&1
+  '
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Invalid semver"* ]]
+}
+
+@test "integration: --version with duplicate tag fails" {
+  cd "$WORK_REPO"
+  _export_env
+
+  add_test_commit "Tag this"
+  git tag -a "v0.0.1" -m "v0.0.1"
+  git push origin "v0.0.1" >/dev/null 2>&1
+  add_test_commit "After tag"
+  push_test_commits
+
+  run bash -c '
+    cd "'"$WORK_REPO"'"
+    "'"$RELEASE_SCRIPT"'" --version 0.0.1 --yes --no-mr 2>&1
+  '
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"already exists"* ]]
+}
+
+@test "integration: --version --yes --dry-run in detached HEAD succeeds" {
+  cd "$WORK_REPO"
+  _export_env
+
+  add_test_commit "Detached HEAD CI test"
+  push_test_commits
+
+  # Detach HEAD at main tip
+  git checkout --detach HEAD >/dev/null 2>&1
+
+  run bash -c '
+    cd "'"$WORK_REPO"'"
+    "'"$RELEASE_SCRIPT"'" --version 1.0.0 --yes --dry-run --no-mr 2>&1
+  '
+  echo "OUTPUT: $output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Detached HEAD"* ]]
+  [[ "$output" == *"Release Summary"* ]]
+  [[ "$output" == *"v1.0.0"* ]]
+}
+
+# ─── Config file integration ─────────────────────────────────────────────────────
+
 @test "integration: reads config from --config flag" {
   cd "$WORK_REPO"
 

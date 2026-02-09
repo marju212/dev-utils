@@ -310,3 +310,46 @@ teardown() {
   '
   [ "$status" -ne 0 ]
 }
+
+@test "confirm: AUTO_YES=true succeeds and logs auto-yes" {
+  DRY_RUN=false
+  AUTO_YES=true
+  run confirm "Proceed?"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"auto-yes"* ]]
+}
+
+# ─── check_branch: detached HEAD ────────────────────────────────────────────────
+
+@test "check_branch: succeeds in detached HEAD at default branch tip" {
+  cd "$WORK_REPO"
+  DEFAULT_BRANCH="main"
+  REMOTE="origin"
+
+  # Detach HEAD at main tip
+  git checkout --detach HEAD >/dev/null 2>&1
+
+  run check_branch
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Detached HEAD"* ]]
+  [[ "$output" == *"clean and in sync"* ]]
+}
+
+@test "check_branch: fails in detached HEAD at wrong commit" {
+  cd "$WORK_REPO"
+  DEFAULT_BRANCH="main"
+  REMOTE="origin"
+
+  # Create a new commit and push it to remote, then detach at the old commit
+  local old_sha
+  old_sha="$(git rev-parse HEAD)"
+  add_test_commit "new commit"
+  push_test_commits
+
+  git checkout --detach "$old_sha" >/dev/null 2>&1
+
+  run check_branch
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Detached HEAD"* ]]
+  [[ "$output" == *"not at the tip"* ]]
+}
