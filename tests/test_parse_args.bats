@@ -114,29 +114,29 @@ setup() {
   [ "$status" -ne 0 ]
 }
 
-# ─── --yes / -y ─────────────────────────────────────────────────────────────────
+# ─── --non-interactive / -n ───────────────────────────────────────────────────
 
-@test "parse_args: --yes sets AUTO_YES=true" {
-  AUTO_YES=false
-  parse_args --yes
-  [ "$AUTO_YES" = "true" ]
+@test "parse_args: --non-interactive sets NON_INTERACTIVE=true" {
+  NON_INTERACTIVE=false
+  parse_args --non-interactive
+  [ "$NON_INTERACTIVE" = "true" ]
 }
 
-@test "parse_args: -y sets AUTO_YES=true" {
-  AUTO_YES=false
-  parse_args -y
-  [ "$AUTO_YES" = "true" ]
+@test "parse_args: -n sets NON_INTERACTIVE=true" {
+  NON_INTERACTIVE=false
+  parse_args -n
+  [ "$NON_INTERACTIVE" = "true" ]
 }
 
-# ─── combined flags with --version and --yes ─────────────────────────────────────
+# ─── combined flags with --version and --non-interactive ─────────────────────────
 
-@test "parse_args: --version --yes --dry-run combined" {
+@test "parse_args: --version --non-interactive --dry-run combined" {
   DRY_RUN=false
-  AUTO_YES=false
+  NON_INTERACTIVE=false
   CLI_VERSION=""
-  parse_args --version 2.0.0 --yes --dry-run
+  parse_args --version 2.0.0 --non-interactive --dry-run
   [ "$CLI_VERSION" = "2.0.0" ]
-  [ "$AUTO_YES" = "true" ]
+  [ "$NON_INTERACTIVE" = "true" ]
   [ "$DRY_RUN" = "true" ]
 }
 

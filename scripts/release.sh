@@ -7,10 +7,11 @@
 # Options:
 #   --dry-run            Run all checks without making changes
 #   --hotfix-mr BRANCH   Create MR from a release branch back to the default branch
+#   --deploy-only        Deploy an existing tagged release (skip branch/tag creation)
 #   --config FILE        Path to config file
 #   --version X.Y.Z      Set release version non-interactively
 #   --deploy-path PATH   Deploy base path (overrides DEPLOY_BASE_PATH config)
-#   --yes, -y            Auto-confirm all prompts (for CI/CD)
+#   --non-interactive, -n Auto-confirm all prompts (for CI/CD)
 #   --help               Show this help message
 #
 set -euo pipefail
@@ -24,9 +25,10 @@ DRY_RUN=false
 HOTFIX_MR_BRANCH=""
 UPDATE_DEFAULT_BRANCH=true
 CONFIG_FILE=""
-AUTO_YES=false
+NON_INTERACTIVE=false
 CLI_VERSION=""
 CLI_DEPLOY_PATH=""
+DEPLOY_ONLY=false
 CLEANUP_BRANCH=""
 CLEANUP_TAG=""
 
@@ -75,8 +77,8 @@ confirm() {
     log_info "[dry-run] Would prompt: $message [y/N]"
     return 0
   fi
-  if $AUTO_YES; then
-    log_info "[auto-yes] $message [y/N]"
+  if $NON_INTERACTIVE; then
+    log_info "[non-interactive] $message [y/N]"
     return 0
   fi
   read -rp "$message [y/N] " answer
@@ -151,20 +153,22 @@ Automate version management and release branch creation for GitLab repos.
 Options:
   --dry-run                  Run all checks without making changes
   --hotfix-mr BRANCH         Create MR from a release branch back to the default branch
+  --deploy-only              Deploy an existing tagged release (skip branch/tag creation)
   --update-default-branch    Change GitLab default branch to the release branch (default: true)
   --config FILE              Path to config file (default: .release.conf)
   --version X.Y.Z            Set release version non-interactively
   --deploy-path PATH         Deploy base path (overrides DEPLOY_BASE_PATH config)
-  --yes, -y                  Auto-confirm all prompts (for CI/CD)
+  --non-interactive, -n      Auto-confirm all prompts (for CI/CD)
   --help                     Show this help message
 
 CI/CD usage:
-  ./scripts/release.sh --version 1.2.3 --yes
-  GITLAB_TOKEN=\$TOKEN ./scripts/release.sh --version 1.2.3 --yes
+  ./scripts/release.sh --version 1.2.3 --non-interactive
+  GITLAB_TOKEN=\$TOKEN ./scripts/release.sh --version 1.2.3 --non-interactive
+  ./scripts/release.sh --deploy-only --version 1.2.3 --non-interactive
 
 Hotfix workflow:
   # 1. Create a release (branch + tag only, no MR)
-  ./scripts/release.sh --version 1.2.3 --yes
+  ./scripts/release.sh --version 1.2.3 --non-interactive
   # 2. Push hotfix commits to the release branch
   git checkout release/v1.2.3 && git cherry-pick <commit> && git push
   # 3. Create MR from the release branch back to the default branch
@@ -205,6 +209,10 @@ parse_args() {
           log_error "--hotfix-mr requires a branch name argument"
           exit 1
         fi
+        if $DEPLOY_ONLY; then
+          log_error "--hotfix-mr cannot be combined with --deploy-only"
+          exit 1
+        fi
         HOTFIX_MR_BRANCH="$2"
         shift 2
         ;;
@@ -228,13 +236,21 @@ parse_args() {
         CLI_VERSION="$2"
         shift 2
         ;;
-      --yes|-y)
-        AUTO_YES=true
+      --non-interactive|-n)
+        NON_INTERACTIVE=true
         shift
         ;;
       --help|-h)
         usage
         exit 0
+        ;;
+      --deploy-only)
+        if [[ -n "$HOTFIX_MR_BRANCH" ]]; then
+          log_error "--deploy-only cannot be combined with --hotfix-mr"
+          exit 1
+        fi
+        DEPLOY_ONLY=true
+        shift
         ;;
       --deploy-path)
         if [[ -z "${2:-}" ]]; then
@@ -691,6 +707,104 @@ hotfix_mr_flow() {
   log_success "Hotfix MR created: ${MR_URL:-n/a}"
 }
 
+# ─── Deploy-only flow ────────────────────────────────────────────────────────────
+
+deploy_only_flow() {
+  if [[ -z "$DEPLOY_BASE_PATH" ]]; then
+    log_error "DEPLOY_BASE_PATH is not configured. Set it via config file, environment variable, or --deploy-path."
+    return 1
+  fi
+
+  log_info "Fetching tags from $REMOTE..."
+  git fetch "$REMOTE" --tags --quiet
+
+  local version=""
+  if [[ -n "$CLI_VERSION" ]]; then
+    validate_semver "$CLI_VERSION"
+    version="$CLI_VERSION"
+  else
+    # Interactive version prompt with retry loop
+    local latest
+    latest="$(get_latest_version)"
+    while true; do
+      echo "" >&2
+      echo "Latest tag: ${TAG_PREFIX}${latest}" >&2
+      echo "" >&2
+      read -rp "Enter version to deploy (X.Y.Z): " version
+      if [[ -z "$version" ]]; then
+        log_warn "Version cannot be empty. Try again."
+        continue
+      fi
+      if ! validate_semver "$version"; then
+        continue
+      fi
+      # Check tag exists
+      if ! git rev-parse "${TAG_PREFIX}${version}" &>/dev/null; then
+        log_warn "Tag '${TAG_PREFIX}${version}' does not exist. Try again."
+        continue
+      fi
+      break
+    done
+  fi
+
+  # For CLI mode, validate tag exists (no retry)
+  if [[ -n "$CLI_VERSION" ]]; then
+    if ! git rev-parse "${TAG_PREFIX}${version}" &>/dev/null; then
+      log_error "Tag '${TAG_PREFIX}${version}' does not exist."
+      return 1
+    fi
+  fi
+
+  if ! confirm "Deploy ${TAG_PREFIX}${version} to ${DEPLOY_BASE_PATH}?"; then
+    log_warn "Deploy cancelled."
+    return 0
+  fi
+
+  deploy_release "$version"
+  log_success "Deploy of ${TAG_PREFIX}${version} completed!"
+}
+
+# ─── Interactive menu ────────────────────────────────────────────────────────────
+
+show_main_menu() {
+  while true; do
+    echo "" >&2
+    echo "What would you like to do?" >&2
+    echo "" >&2
+    echo "  1) Release        Create release branch + tag (+ optional deploy)" >&2
+    echo "  2) Deploy only    Deploy an existing tagged release" >&2
+    echo "  3) Hotfix MR      Create MR from a release branch to ${DEFAULT_BRANCH}" >&2
+    echo "" >&2
+
+    local choice
+    read -rp "Select an option [1-3]: " choice
+
+    case "$choice" in
+      1)
+        # Fall through to full release flow
+        return 0
+        ;;
+      2)
+        DEPLOY_ONLY=true
+        return 0
+        ;;
+      3)
+        while true; do
+          read -rp "Enter release branch name (e.g. release/v1.2.3): " HOTFIX_MR_BRANCH
+          if [[ -n "$HOTFIX_MR_BRANCH" ]]; then
+            break
+          fi
+          log_warn "Branch name cannot be empty. Try again."
+        done
+        return 0
+        ;;
+      *)
+        log_warn "Invalid choice: '$choice'. Please enter 1, 2, or 3."
+        ;;
+    esac
+  done
+}
+
 # ─── Git operations ─────────────────────────────────────────────────────────────
 
 create_release_branch() {
@@ -836,7 +950,8 @@ deploy_release() {
 
   # Clone step
   if [[ -d "$deploy_dir" ]]; then
-    log_warn "Deploy directory already exists, skipping clone: $deploy_dir"
+    log_error "Deploy directory already exists: $deploy_dir"
+    return 1
   elif $DRY_RUN; then
     log_info "[dry-run] Would clone ${release_tag} into ${deploy_dir}"
   else
@@ -848,7 +963,8 @@ deploy_release() {
 
   # Modulefile step
   if [[ -f "$mf_file" ]]; then
-    log_warn "Modulefile already exists, skipping: $mf_file"
+    log_error "Modulefile already exists: $mf_file"
+    return 1
   else
     # Check for an existing modulefile from a previous version to use as base
     local latest_mf=""
@@ -912,10 +1028,32 @@ main() {
     echo "" >&2
   fi
 
-  # Dispatch to hotfix MR flow if requested
+  # Dispatch to hotfix MR flow if requested via CLI
   if [[ -n "$HOTFIX_MR_BRANCH" ]]; then
     hotfix_mr_flow
     return 0
+  fi
+
+  # Dispatch to deploy-only flow if requested via CLI
+  if $DEPLOY_ONLY; then
+    deploy_only_flow
+    return 0
+  fi
+
+  # Show interactive menu when no mode flag, no --version, and stdin is a TTY
+  if [[ -z "$CLI_VERSION" ]] && [[ -t 0 ]]; then
+    show_main_menu
+
+    # Re-dispatch based on menu selection
+    if [[ -n "$HOTFIX_MR_BRANCH" ]]; then
+      hotfix_mr_flow
+      return 0
+    fi
+    if $DEPLOY_ONLY; then
+      deploy_only_flow
+      return 0
+    fi
+    # Choice 1 (Release) falls through to the full release flow below
   fi
 
   # Set up cleanup trap

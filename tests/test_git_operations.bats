@@ -311,12 +311,12 @@ teardown() {
   [ "$status" -ne 0 ]
 }
 
-@test "confirm: AUTO_YES=true succeeds and logs auto-yes" {
+@test "confirm: NON_INTERACTIVE=true succeeds and logs non-interactive" {
   DRY_RUN=false
-  AUTO_YES=true
+  NON_INTERACTIVE=true
   run confirm "Proceed?"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"auto-yes"* ]]
+  [[ "$output" == *"non-interactive"* ]]
 }
 
 # ─── check_branch: detached HEAD ────────────────────────────────────────────────

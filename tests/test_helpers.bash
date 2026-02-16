@@ -73,10 +73,22 @@ _install_git_wrapper() {
 
   cat > "$wrapper_dir/git" <<WRAPPER
 #!/usr/bin/env bash
-# Git wrapper for tests: intercepts 'remote get-url' to return fake GitLab URL.
+# Git wrapper for tests: intercepts 'remote get-url' to return fake GitLab URL
+# and rewrites clone commands to use the real bare repo.
 if [[ "\${1:-}" == "remote" && "\${2:-}" == "get-url" ]]; then
   echo "$FAKE_GITLAB_URL"
   exit 0
+fi
+if [[ "\${1:-}" == "clone" ]]; then
+  args=()
+  for arg in "\$@"; do
+    if [[ "\$arg" == "$FAKE_GITLAB_URL" ]]; then
+      args+=("$REMOTE_REPO")
+    else
+      args+=("\$arg")
+    fi
+  done
+  exec "$real_git" "\${args[@]}"
 fi
 exec "$real_git" "\$@"
 WRAPPER

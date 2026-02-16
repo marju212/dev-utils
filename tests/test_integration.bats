@@ -237,9 +237,9 @@ _export_env() {
 
 # ─── Config file integration ─────────────────────────────────────────────────────
 
-# ─── CI mode (--version --yes) ───────────────────────────────────────────────
+# ─── CI mode (--version --non-interactive) ───────────────────────────────────────────────
 
-@test "integration: --version --yes completes without interaction" {
+@test "integration: --version --non-interactive completes without interaction" {
   cd "$WORK_REPO"
   _export_env
 
@@ -248,13 +248,13 @@ _export_env() {
 
   run bash -c '
     cd "'"$WORK_REPO"'"
-    "'"$RELEASE_SCRIPT"'" --version 1.0.0 --yes 2>&1
+    "'"$RELEASE_SCRIPT"'" --version 1.0.0 --non-interactive 2>&1
   '
   echo "OUTPUT: $output"
   [ "$status" -eq 0 ]
   [[ "$output" == *"Release Summary"* ]]
   [[ "$output" == *"v1.0.0"* ]]
-  [[ "$output" == *"auto-yes"* ]]
+  [[ "$output" == *"non-interactive"* ]]
 
   # Verify branch was created in remote
   run git ls-remote --heads "$REMOTE_REPO" "release/v1.0.0"
@@ -274,7 +274,7 @@ _export_env() {
 
   run bash -c '
     cd "'"$WORK_REPO"'"
-    "'"$RELEASE_SCRIPT"'" --version abc --yes 2>&1
+    "'"$RELEASE_SCRIPT"'" --version abc --non-interactive 2>&1
   '
   [ "$status" -ne 0 ]
   [[ "$output" == *"Invalid semver"* ]]
@@ -292,13 +292,13 @@ _export_env() {
 
   run bash -c '
     cd "'"$WORK_REPO"'"
-    "'"$RELEASE_SCRIPT"'" --version 0.0.1 --yes 2>&1
+    "'"$RELEASE_SCRIPT"'" --version 0.0.1 --non-interactive 2>&1
   '
   [ "$status" -ne 0 ]
   [[ "$output" == *"already exists"* ]]
 }
 
-@test "integration: --version --yes --dry-run in detached HEAD succeeds" {
+@test "integration: --version --non-interactive --dry-run in detached HEAD succeeds" {
   cd "$WORK_REPO"
   _export_env
 
@@ -310,7 +310,7 @@ _export_env() {
 
   run bash -c '
     cd "'"$WORK_REPO"'"
-    "'"$RELEASE_SCRIPT"'" --version 1.0.0 --yes --dry-run 2>&1
+    "'"$RELEASE_SCRIPT"'" --version 1.0.0 --non-interactive --dry-run 2>&1
   '
   echo "OUTPUT: $output"
   [ "$status" -eq 0 ]
@@ -383,7 +383,7 @@ EOF
 
   run bash -c '
     cd "'"$WORK_REPO"'"
-    "'"$RELEASE_SCRIPT"'" --hotfix-mr release/v1.0.0 --dry-run --yes 2>&1
+    "'"$RELEASE_SCRIPT"'" --hotfix-mr release/v1.0.0 --dry-run --non-interactive 2>&1
   '
   echo "OUTPUT: $output"
   [ "$status" -eq 0 ]
@@ -400,7 +400,7 @@ EOF
 
   run bash -c '
     cd "'"$WORK_REPO"'"
-    "'"$RELEASE_SCRIPT"'" --hotfix-mr release/v9.9.9 --yes 2>&1
+    "'"$RELEASE_SCRIPT"'" --hotfix-mr release/v9.9.9 --non-interactive 2>&1
   '
   echo "OUTPUT: $output"
   [ "$status" -ne 0 ]
@@ -421,7 +421,7 @@ EOF
 
   run bash -c '
     cd "'"$WORK_REPO"'"
-    "'"$RELEASE_SCRIPT"'" --hotfix-mr release/v1.0.0 --yes 2>&1
+    "'"$RELEASE_SCRIPT"'" --hotfix-mr release/v1.0.0 --non-interactive 2>&1
   '
   echo "OUTPUT: $output"
   [ "$status" -ne 0 ]

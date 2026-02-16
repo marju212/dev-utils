@@ -35,6 +35,23 @@ A **GitLab personal access token** with `api` scope is required for API operatio
 ./scripts/release.sh --hotfix-mr release/v1.2.3
 ```
 
+### Interactive Menu
+
+When run interactively without a mode flag (`--hotfix-mr`, `--deploy-only`) and without `--version`, the script presents an interactive menu:
+
+```
+What would you like to do?
+
+  1) Release        Create release branch + tag (+ optional deploy)
+  2) Deploy only    Deploy an existing tagged release
+  3) Hotfix MR      Create MR from a release branch to main
+```
+
+The menu is **skipped** when:
+- `--hotfix-mr` or `--deploy-only` CLI flag is given (direct dispatch)
+- `--version` is given (implies full release intent)
+- stdin is not a TTY (piped input / CI) — preserves backward compatibility
+
 ### What It Does
 
 When you run `release.sh`, it performs the following steps in order:
@@ -63,7 +80,7 @@ The release flow creates a branch and tag only — no merge request. MRs are cre
 
 1. **Create a release** (branch + tag):
    ```bash
-   ./scripts/release.sh --version 1.2.0 --yes
+   ./scripts/release.sh --version 1.2.0 --non-interactive
    ```
 
 2. **Push hotfix commits** to the release branch:
@@ -82,8 +99,32 @@ The `--hotfix-mr` flag:
 - Fetches from the remote and verifies the branch exists
 - Checks that the branch has commits ahead of the default branch
 - Generates a changelog from those commits
-- Asks for confirmation (or auto-confirms with `--yes`)
+- Asks for confirmation (or auto-confirms with `--non-interactive`)
 - Creates a merge request via the GitLab API
+
+### Deploy-Only Workflow
+
+The `--deploy-only` flag deploys an existing tagged release without creating a new branch or tag. This is useful when a release has already been created and you need to deploy it to a new environment or re-deploy after infrastructure changes.
+
+```bash
+# Interactive — prompts for the version to deploy
+./scripts/release.sh --deploy-only
+
+# Non-interactive — specify version directly
+./scripts/release.sh --deploy-only --version 1.2.3 --non-interactive
+
+# Dry run — preview what would be deployed
+./scripts/release.sh --deploy-only --version 1.2.3 --dry-run
+```
+
+The deploy-only flow:
+- Validates that `DEPLOY_BASE_PATH` is configured
+- Fetches tags from the remote
+- Prompts for a version (or uses `--version`)
+- Validates the tag exists
+- Clones the tag into `DEPLOY_BASE_PATH/<tool>/<version>`
+- Creates a modulefile at `DEPLOY_BASE_PATH/mf/<tool>/<version>`
+- **Errors if the deploy directory or modulefile already exists** (never overwrites)
 
 ### Command-Line Options
 
@@ -91,10 +132,11 @@ The `--hotfix-mr` flag:
 |---|---|
 | `--dry-run` | Run all validation and checks without making any changes. API calls, branch creation, tagging, and MR creation are skipped. |
 | `--hotfix-mr BRANCH` | Create a merge request from the specified release branch back to the default branch. The branch must exist on the remote and have commits ahead of the default branch. |
+| `--deploy-only` | Deploy an existing tagged release without creating a new branch or tag. Requires `DEPLOY_BASE_PATH` to be configured. Cannot be combined with `--hotfix-mr`. |
 | `--update-default-branch` | After creating the release branch, update the GitLab project's default branch to point to it. |
 | `--config FILE` | Load configuration from the specified file (in addition to the default config locations). |
 | `--version X.Y.Z` | Set the release version directly, bypassing the interactive version prompt. |
-| `--yes`, `-y` | Auto-confirm all prompts (for CI/CD). |
+| `--non-interactive`, `-n` | Auto-confirm all prompts (for CI/CD). |
 | `--help`, `-h` | Show the help message and exit. |
 
 ### Configuration
@@ -226,20 +268,23 @@ The trap is disabled after a successful release to avoid cleaning up valid artif
 
 ### CI/CD Usage
 
-The script supports fully non-interactive execution for CI/CD pipelines via `--version` and `--yes`:
+The script supports fully non-interactive execution for CI/CD pipelines via `--version` and `--non-interactive`:
 
 ```bash
 # Non-interactive release (no prompts)
-./scripts/release.sh --version 1.2.3 --yes
+./scripts/release.sh --version 1.2.3 --non-interactive
 
 # Create hotfix MR in CI
-./scripts/release.sh --hotfix-mr release/v1.2.3 --yes
+./scripts/release.sh --hotfix-mr release/v1.2.3 --non-interactive
+
+# Deploy an existing release in CI
+./scripts/release.sh --deploy-only --version 1.2.3 --non-interactive
 ```
 
 | Option | Description |
 |---|---|
 | `--version X.Y.Z` | Set the release version directly, bypassing the interactive version prompt. |
-| `--yes`, `-y` | Auto-confirm all prompts. Without this, confirmation prompts will block in CI. |
+| `--non-interactive`, `-n` | Auto-confirm all prompts. Without this, confirmation prompts will block in CI. |
 
 **Detached HEAD support:** GitLab CI runners typically check out a specific commit (detached HEAD) rather than a branch. The script detects this and validates that HEAD is at the tip of the remote default branch instead of requiring a named branch checkout.
 
@@ -278,6 +323,12 @@ export RELEASE_TAG_PREFIX=release-
 
 # Hotfix MR dry run
 ./scripts/release.sh --hotfix-mr release/v1.2.3 --dry-run
+
+# Deploy an existing release
+./scripts/release.sh --deploy-only --version 1.2.3 --non-interactive
+
+# Deploy dry run
+./scripts/release.sh --deploy-only --version 1.2.3 --dry-run
 ```
 
 ### Architecture
@@ -292,9 +343,11 @@ The script (~750 lines) is organized into sequential modules, each responsible f
 6. **Changelog generation** — markdown-formatted commit list since last tag
 7. **GitLab API module** — `gitlab_api()` passes tokens via temp file headers (never CLI args); `get_gitlab_project_id()` parses SSH/HTTPS remotes including nested groups; `create_merge_request()` and `update_default_branch()`
 8. **Hotfix MR flow** — `hotfix_mr_flow()` validates a release branch, generates a changelog from commits ahead of the default branch, and creates a merge request back to the default branch
-9. **Git operations** — branch/tag creation with push
-10. **Error recovery** — `cleanup_on_failure()` trap handler removes partial remote branches/tags on failure
-11. **Main flow** — `main()` orchestrates the full workflow; dispatches to `hotfix_mr_flow()` when `--hotfix-mr` is used
+9. **Deploy-only flow** — `deploy_only_flow()` deploys an existing tagged release without creating branches or tags
+10. **Interactive menu** — `show_main_menu()` presents a choice of Release, Deploy only, or Hotfix MR when run interactively without a mode flag
+11. **Git operations** — branch/tag creation with push
+12. **Error recovery** — `cleanup_on_failure()` trap handler removes partial remote branches/tags on failure
+13. **Main flow** — `main()` orchestrates the full workflow; dispatches to `hotfix_mr_flow()`, `deploy_only_flow()`, or shows the interactive menu
 
 Key design patterns:
 - Every write operation respects `$DRY_RUN` — full validation runs without side effects

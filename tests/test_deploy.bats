@@ -160,7 +160,7 @@ WRAPPER
   grep -q "prepend-path PATH" "$TEST_TMPDIR/deploy/mf/test-project/2.0.0"
 }
 
-@test "deploy_release: skips clone if version dir already exists" {
+@test "deploy_release: errors if version dir already exists" {
   setup_test_repo
   DRY_RUN=false
   TAG_PREFIX="v"
@@ -174,11 +174,11 @@ WRAPPER
   mkdir -p "$TEST_TMPDIR/deploy/test-project/3.0.0"
 
   run deploy_release "3.0.0"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"Deploy directory already exists, skipping clone"* ]]
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Deploy directory already exists"* ]]
 }
 
-@test "deploy_release: skips modulefile if file already exists" {
+@test "deploy_release: errors if modulefile already exists" {
   setup_test_repo
   DRY_RUN=false
   TAG_PREFIX="v"
@@ -193,8 +193,8 @@ WRAPPER
   echo "existing" > "$TEST_TMPDIR/deploy/mf/test-project/4.0.0"
 
   run deploy_release "4.0.0"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"Modulefile already exists, skipping"* ]]
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Modulefile already exists"* ]]
 
   # Content should be unchanged
   grep -q "existing" "$TEST_TMPDIR/deploy/mf/test-project/4.0.0"
@@ -221,9 +221,6 @@ set root /opt/software/test-project/4.0.0
 prepend-path PATH $root/bin
 prepend-path LD_LIBRARY_PATH $root/lib
 EOF
-
-  # Pre-create the deploy directory so clone is skipped (not relevant here)
-  mkdir -p "$TEST_TMPDIR/deploy/test-project/5.0.0"
 
   run deploy_release "5.0.0"
   [ "$status" -eq 0 ]
@@ -273,9 +270,6 @@ set root /opt/test-project/1.0.0
 EOF
   echo "junk" > "$TEST_TMPDIR/deploy/mf/test-project/README.md"
   echo "junk" > "$TEST_TMPDIR/deploy/mf/test-project/.backup"
-
-  # Pre-create deploy dir so clone is skipped
-  mkdir -p "$TEST_TMPDIR/deploy/test-project/2.0.0"
 
   run deploy_release "2.0.0"
   [ "$status" -eq 0 ]
