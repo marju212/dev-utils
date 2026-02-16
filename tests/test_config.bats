@@ -254,3 +254,44 @@ EOF
   [ "$GITLAB_API_URL" = "https://config-only.example.com/api/v4" ]
   [ "$DEFAULT_BRANCH" = "develop" ]
 }
+
+# ─── DEPLOY_BASE_PATH ──────────────────────────────────────────────────────
+
+@test "load_config: DEPLOY_BASE_PATH loaded from conf file" {
+  cat > "$TEST_TMPDIR/.release.conf" <<'EOF'
+DEPLOY_BASE_PATH=/opt/software
+EOF
+
+  REPO_ROOT="$TEST_TMPDIR"
+  CONFIG_FILE=""
+  _ENV_DEPLOY_BASE_PATH=""
+  CLI_DEPLOY_PATH=""
+  load_config
+  [ "$DEPLOY_BASE_PATH" = "/opt/software" ]
+}
+
+@test "load_config: DEPLOY_BASE_PATH env var overrides config" {
+  cat > "$TEST_TMPDIR/.release.conf" <<'EOF'
+DEPLOY_BASE_PATH=/opt/from-config
+EOF
+
+  REPO_ROOT="$TEST_TMPDIR"
+  CONFIG_FILE=""
+  _ENV_DEPLOY_BASE_PATH="/opt/from-env"
+  CLI_DEPLOY_PATH=""
+  load_config
+  [ "$DEPLOY_BASE_PATH" = "/opt/from-env" ]
+}
+
+@test "load_config: CLI --deploy-path overrides env var and config" {
+  cat > "$TEST_TMPDIR/.release.conf" <<'EOF'
+DEPLOY_BASE_PATH=/opt/from-config
+EOF
+
+  REPO_ROOT="$TEST_TMPDIR"
+  CONFIG_FILE=""
+  _ENV_DEPLOY_BASE_PATH="/opt/from-env"
+  CLI_DEPLOY_PATH="/opt/from-cli"
+  load_config
+  [ "$DEPLOY_BASE_PATH" = "/opt/from-cli" ]
+}

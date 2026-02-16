@@ -9,6 +9,7 @@
 #   --hotfix-mr BRANCH   Create MR from a release branch back to the default branch
 #   --config FILE        Path to config file
 #   --version X.Y.Z      Set release version non-interactively
+#   --deploy-path PATH   Deploy base path (overrides DEPLOY_BASE_PATH config)
 #   --yes, -y            Auto-confirm all prompts (for CI/CD)
 #   --help               Show this help message
 #
@@ -25,6 +26,7 @@ UPDATE_DEFAULT_BRANCH=true
 CONFIG_FILE=""
 AUTO_YES=false
 CLI_VERSION=""
+CLI_DEPLOY_PATH=""
 CLEANUP_BRANCH=""
 CLEANUP_TAG=""
 
@@ -37,6 +39,7 @@ _ENV_RELEASE_TAG_PREFIX="${RELEASE_TAG_PREFIX:-}"
 _ENV_RELEASE_REMOTE="${RELEASE_REMOTE:-}"
 _ENV_GITLAB_VERIFY_SSL="${GITLAB_VERIFY_SSL:-}"
 _ENV_RELEASE_UPDATE_DEFAULT_BRANCH="${RELEASE_UPDATE_DEFAULT_BRANCH:-}"
+_ENV_DEPLOY_BASE_PATH="${DEPLOY_BASE_PATH:-}"
 
 # Defaults (overridden by config / env)
 GITLAB_TOKEN="${GITLAB_TOKEN:-}"
@@ -45,6 +48,7 @@ VERIFY_SSL="${GITLAB_VERIFY_SSL:-true}"
 DEFAULT_BRANCH="${RELEASE_DEFAULT_BRANCH:-main}"
 TAG_PREFIX="${RELEASE_TAG_PREFIX:-v}"
 REMOTE="${RELEASE_REMOTE:-origin}"
+DEPLOY_BASE_PATH="${DEPLOY_BASE_PATH:-}"
 
 # ─── Logging ────────────────────────────────────────────────────────────────────
 
@@ -90,6 +94,36 @@ validate_semver() {
   fi
 }
 
+# Parse the git remote URL and extract the project path.
+# Sets: _PARSED_REMOTE_URL (raw URL), _PARSED_PROJECT_PATH (e.g. group/sub/project)
+_parse_remote_url() {
+  _PARSED_REMOTE_URL="$(git remote get-url "$REMOTE" 2>/dev/null || true)"
+
+  if [[ -z "$_PARSED_REMOTE_URL" ]]; then
+    log_error "Cannot determine remote URL for '$REMOTE'."
+    return 1
+  fi
+
+  _PARSED_PROJECT_PATH=""
+
+  # SSH: git@gitlab.com:group/subgroup/project.git
+  if [[ "$_PARSED_REMOTE_URL" =~ ^git@[^:]+:(.+)\.git$ ]]; then
+    _PARSED_PROJECT_PATH="${BASH_REMATCH[1]}"
+  elif [[ "$_PARSED_REMOTE_URL" =~ ^git@[^:]+:(.+)$ ]]; then
+    _PARSED_PROJECT_PATH="${BASH_REMATCH[1]}"
+  # HTTPS: https://gitlab.com/group/subgroup/project.git
+  elif [[ "$_PARSED_REMOTE_URL" =~ ^https?://[^/]+/(.+)\.git$ ]]; then
+    _PARSED_PROJECT_PATH="${BASH_REMATCH[1]}"
+  elif [[ "$_PARSED_REMOTE_URL" =~ ^https?://[^/]+/(.+)$ ]]; then
+    _PARSED_PROJECT_PATH="${BASH_REMATCH[1]}"
+  fi
+
+  if [[ -z "$_PARSED_PROJECT_PATH" ]]; then
+    log_error "Cannot parse project path from remote URL: $_PARSED_REMOTE_URL"
+    return 1
+  fi
+}
+
 # ─── Prerequisites ──────────────────────────────────────────────────────────────
 
 check_prerequisites() {
@@ -120,6 +154,7 @@ Options:
   --update-default-branch    Change GitLab default branch to the release branch (default: true)
   --config FILE              Path to config file (default: .release.conf)
   --version X.Y.Z            Set release version non-interactively
+  --deploy-path PATH         Deploy base path (overrides DEPLOY_BASE_PATH config)
   --yes, -y                  Auto-confirm all prompts (for CI/CD)
   --help                     Show this help message
 
@@ -143,6 +178,7 @@ Environment variables:
   RELEASE_REMOTE           Git remote name (default: origin)
   GITLAB_VERIFY_SSL        Verify SSL certificates (default: true, set to false for self-signed certs)
   RELEASE_UPDATE_DEFAULT_BRANCH  Update GitLab default branch to release branch (default: true)
+  DEPLOY_BASE_PATH           Base path for deploy (clone + modulefile). If unset, deploy is skipped.
 
 Token resolution (first match wins):
   GITLAB_TOKEN env var     Exported shell variable (highest priority)
@@ -200,6 +236,14 @@ parse_args() {
         usage
         exit 0
         ;;
+      --deploy-path)
+        if [[ -z "${2:-}" ]]; then
+          log_error "--deploy-path requires a directory path argument"
+          exit 1
+        fi
+        CLI_DEPLOY_PATH="$2"
+        shift 2
+        ;;
       *)
         log_error "Unknown option: $1"
         usage
@@ -234,6 +278,7 @@ _load_conf_file() {
         REMOTE)             REMOTE="$value" ;;
         VERIFY_SSL)         VERIFY_SSL="$value" ;;
         UPDATE_DEFAULT_BRANCH) if [[ "$value" == "true" ]]; then UPDATE_DEFAULT_BRANCH=true; elif [[ "$value" == "false" ]]; then UPDATE_DEFAULT_BRANCH=false; fi ;;
+        DEPLOY_BASE_PATH)   DEPLOY_BASE_PATH="$value" ;;
         *)                  log_warn "Unknown config key: $key" ;;
       esac
     done < "$file"
@@ -278,6 +323,10 @@ load_config() {
   if [[ -n "$_ENV_RELEASE_UPDATE_DEFAULT_BRANCH" ]]; then
     if [[ "$_ENV_RELEASE_UPDATE_DEFAULT_BRANCH" == "true" ]]; then UPDATE_DEFAULT_BRANCH=true; else UPDATE_DEFAULT_BRANCH=false; fi
   fi
+  if [[ -n "$_ENV_DEPLOY_BASE_PATH" ]]; then    DEPLOY_BASE_PATH="$_ENV_DEPLOY_BASE_PATH"; fi
+
+  # CLI --deploy-path overrides everything
+  if [[ -n "$CLI_DEPLOY_PATH" ]]; then           DEPLOY_BASE_PATH="$CLI_DEPLOY_PATH"; fi
 }
 
 # ─── Branch validation ──────────────────────────────────────────────────────────
@@ -498,32 +547,8 @@ gitlab_api() {
 }
 
 get_gitlab_project_id() {
-  local remote_url
-  remote_url="$(git remote get-url "$REMOTE" 2>/dev/null || true)"
-
-  if [[ -z "$remote_url" ]]; then
-    log_error "Cannot determine remote URL for '$REMOTE'."
-    exit 1
-  fi
-
-  local project_path=""
-
-  # SSH: git@gitlab.com:group/subgroup/project.git
-  if [[ "$remote_url" =~ ^git@[^:]+:(.+)\.git$ ]]; then
-    project_path="${BASH_REMATCH[1]}"
-  elif [[ "$remote_url" =~ ^git@[^:]+:(.+)$ ]]; then
-    project_path="${BASH_REMATCH[1]}"
-  # HTTPS: https://gitlab.com/group/subgroup/project.git
-  elif [[ "$remote_url" =~ ^https?://[^/]+/(.+)\.git$ ]]; then
-    project_path="${BASH_REMATCH[1]}"
-  elif [[ "$remote_url" =~ ^https?://[^/]+/(.+)$ ]]; then
-    project_path="${BASH_REMATCH[1]}"
-  fi
-
-  if [[ -z "$project_path" ]]; then
-    log_error "Cannot parse project path from remote URL: $remote_url"
-    exit 1
-  fi
+  _parse_remote_url
+  local project_path="$_PARSED_PROJECT_PATH"
 
   # URL-encode the full project path (slashes, spaces, special chars)
   local encoded_path
@@ -781,6 +806,100 @@ print_summary() {
   fi
 }
 
+# ─── Deploy ──────────────────────────────────────────────────────────────────
+
+extract_tool_name() {
+  _parse_remote_url
+
+  # Extract the last path component as the tool name
+  TOOL_NAME="${_PARSED_PROJECT_PATH##*/}"
+  # Expose the remote URL so callers don't need a second git call
+  REMOTE_URL="$_PARSED_REMOTE_URL"
+}
+
+deploy_release() {
+  local version="$1"
+  local release_tag="${TAG_PREFIX}${version}"
+
+  # Validate that DEPLOY_BASE_PATH is an absolute path
+  if [[ "$DEPLOY_BASE_PATH" != /* ]]; then
+    log_error "DEPLOY_BASE_PATH must be an absolute path: $DEPLOY_BASE_PATH"
+    return 1
+  fi
+
+  extract_tool_name
+  local remote_url="$REMOTE_URL"
+
+  local deploy_dir="${DEPLOY_BASE_PATH}/${TOOL_NAME}/${version}"
+  local mf_dir="${DEPLOY_BASE_PATH}/mf/${TOOL_NAME}"
+  local mf_file="${mf_dir}/${version}"
+
+  # Clone step
+  if [[ -d "$deploy_dir" ]]; then
+    log_warn "Deploy directory already exists, skipping clone: $deploy_dir"
+  elif $DRY_RUN; then
+    log_info "[dry-run] Would clone ${release_tag} into ${deploy_dir}"
+  else
+    log_info "Cloning ${release_tag} into ${deploy_dir}..."
+    mkdir -p "$(dirname "$deploy_dir")"
+    git clone --branch "$release_tag" --depth 1 "$remote_url" "$deploy_dir"
+    log_success "Cloned ${release_tag} into ${deploy_dir}"
+  fi
+
+  # Modulefile step
+  if [[ -f "$mf_file" ]]; then
+    log_warn "Modulefile already exists, skipping: $mf_file"
+  else
+    # Check for an existing modulefile from a previous version to use as base
+    local latest_mf=""
+    if [[ -d "$mf_dir" ]]; then
+      latest_mf="$(ls "$mf_dir" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -t. -k1,1n -k2,2n -k3,3n | tail -n1)"
+      if [[ -n "$latest_mf" ]]; then
+        latest_mf="${mf_dir}/${latest_mf}"
+      fi
+    fi
+
+    if $DRY_RUN; then
+      if [[ -n "$latest_mf" && -f "$latest_mf" ]]; then
+        log_info "[dry-run] Would copy modulefile from ${latest_mf} to ${mf_file} (updating version to ${version})"
+      else
+        log_info "[dry-run] Would write modulefile to ${mf_file}"
+      fi
+    elif [[ -n "$latest_mf" && -f "$latest_mf" ]]; then
+      log_info "Copying modulefile from ${latest_mf} to ${mf_file}..."
+      mkdir -p "$mf_dir"
+      # Copy previous modulefile and update version references
+      local prev_version prev_version_escaped
+      prev_version="$(basename "$latest_mf")"
+      prev_version_escaped="${prev_version//./\\.}"
+      sed "s/${prev_version_escaped}/${version}/g" "$latest_mf" > "$mf_file"
+      log_success "Modulefile copied and updated to ${mf_file}"
+    else
+      log_info "Writing modulefile to ${mf_file}..."
+      mkdir -p "$mf_dir"
+      cat > "$mf_file" <<MODEOF
+#%Module1.0
+##
+## ${TOOL_NAME}/${version} modulefile
+##
+
+proc ModulesHelp { } {
+    puts stderr "${TOOL_NAME} version ${version}"
+}
+
+module-whatis "${TOOL_NAME} version ${version}"
+
+conflict ${TOOL_NAME}
+
+set root ${DEPLOY_BASE_PATH}/${TOOL_NAME}/${version}
+
+prepend-path PATH \$root/bin
+MODEOF
+      log_success "Modulefile written to ${mf_file}"
+    fi
+  fi
+}
+
 # ─── Main ───────────────────────────────────────────────────────────────────────
 
 main() {
@@ -866,6 +985,15 @@ main() {
 
   # Print summary
   print_summary "$NEW_VERSION" "$release_branch" "$release_tag"
+
+  # Deploy prompt (only if DEPLOY_BASE_PATH is configured)
+  if [[ -n "$DEPLOY_BASE_PATH" ]]; then
+    if confirm "Deploy ${release_tag} to ${DEPLOY_BASE_PATH}?"; then
+      deploy_release "$NEW_VERSION" || log_warn "Deploy failed (release itself succeeded)."
+    else
+      log_info "Deploy skipped."
+    fi
+  fi
 
   log_success "Release ${release_tag} completed!"
 }

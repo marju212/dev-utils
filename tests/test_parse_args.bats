@@ -139,3 +139,18 @@ setup() {
   [ "$AUTO_YES" = "true" ]
   [ "$DRY_RUN" = "true" ]
 }
+
+# ─── --deploy-path ──────────────────────────────────────────────────────────
+
+@test "parse_args: --deploy-path sets CLI_DEPLOY_PATH" {
+  CLI_DEPLOY_PATH=""
+  parse_args --deploy-path /opt/deploy
+  [ "$CLI_DEPLOY_PATH" = "/opt/deploy" ]
+}
+
+@test "parse_args: --deploy-path without value exits with error" {
+  run bash -c '
+    source "'"$RELEASE_SCRIPT"'" --deploy-path 2>&1
+  '
+  [ "$status" -ne 0 ]
+}
