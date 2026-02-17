@@ -67,7 +67,7 @@ When you run `release.sh`, it performs the following steps in order:
 9. **Detects the GitLab project ID** by parsing the git remote URL (supports SSH and HTTPS, including nested groups and self-hosted instances).
 10. **Creates a release branch** named `release/<tag>` (e.g. `release/v1.3.0`) and pushes it to the remote.
 11. **Creates an annotated tag** with the changelog as the tag message and pushes it to the remote.
-12. **Optionally updates the GitLab default branch** to the release branch (if `--update-default-branch` is passed).
+12. **Optionally updates the GitLab default branch** to the release branch. When `UPDATE_DEFAULT_BRANCH` is enabled (the default), the script prompts for confirmation before making the change. The prompt is skipped in `--non-interactive` mode.
 13. **Switches back** to the default branch and prints a summary.
 
 If any step fails after branches or tags have been pushed, a **cleanup trap** automatically deletes the partial remote branch and tag, then restores you to the default branch.

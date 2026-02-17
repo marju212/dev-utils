@@ -1110,7 +1110,11 @@ main() {
 
   # Optionally update default branch on GitLab
   if $UPDATE_DEFAULT_BRANCH; then
-    update_default_branch "$release_branch"
+    if confirm "Update GitLab default branch to '${release_branch}'?"; then
+      update_default_branch "$release_branch"
+    else
+      log_info "Skipping default branch update."
+    fi
   fi
 
   # Disable cleanup trap — we succeeded
